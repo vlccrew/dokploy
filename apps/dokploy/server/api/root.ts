@@ -22,6 +22,7 @@ import { mongoRouter } from "./routers/mongo";
 import { mountRouter } from "./routers/mount";
 import { mysqlRouter } from "./routers/mysql";
 import { notificationRouter } from "./routers/notification";
+import { oidcRouter } from "./routers/oidc";
 import { organizationRouter } from "./routers/organization";
 import { patchRouter } from "./routers/patch";
 import { portRouter } from "./routers/port";
@@ -75,6 +76,7 @@ export const appRouter = createTRPCRouter({
 	mounts: mountRouter,
 	mysql: mysqlRouter,
 	notification: notificationRouter,
+	oidc: oidcRouter,
 	port: portRouter,
 	postgres: postgresRouter,
 	previewDeployment: previewDeploymentRouter,

@@ -2,6 +2,7 @@ import { apiKeyClient } from "@better-auth/api-key/client";
 import { ssoClient } from "@better-auth/sso/client";
 import {
 	adminClient,
+	genericOAuthClient,
 	inferAdditionalFields,
 	organizationClient,
 	twoFactorClient,
@@ -16,6 +17,7 @@ export const authClient = createAuthClient({
 		apiKeyClient(),
 		ssoClient(),
 		adminClient(),
+		genericOAuthClient(),
 		inferAdditionalFields({
 			user: {
 				lastName: {
