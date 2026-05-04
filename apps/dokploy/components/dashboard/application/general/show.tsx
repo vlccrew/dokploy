@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/tooltip";
 import { api } from "@/utils/api";
 import { DockerTerminalModal } from "../../settings/web-server/docker-terminal-modal";
+import { KubernetesTerminalModal } from "../terminal/kubernetes-terminal-modal";
 
 interface Props {
 	applicationId: string;
@@ -268,19 +269,31 @@ export const ShowGeneralApplication = ({ applicationId }: Props) => {
 							</DialogAction>
 						) : null}
 					</TooltipProvider>
-					<DockerTerminalModal
-						appName={data?.appName || ""}
-						serverId={data?.serverId || ""}
-						serviceId={applicationId}
-					>
-						<Button
-							variant="outline"
-							className="flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-offset-2 col-span-2"
+					{data?.deploymentEngine === "kubernetes" ? (
+						<KubernetesTerminalModal applicationId={applicationId}>
+							<Button
+								variant="outline"
+								className="flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-offset-2 col-span-2"
+							>
+								<Terminal className="size-4 mr-1" />
+								Open Terminal
+							</Button>
+						</KubernetesTerminalModal>
+					) : (
+						<DockerTerminalModal
+							appName={data?.appName || ""}
+							serverId={data?.serverId || ""}
+							serviceId={applicationId}
 						>
-							<Terminal className="size-4 mr-1" />
-							Open Terminal
-						</Button>
-					</DockerTerminalModal>
+							<Button
+								variant="outline"
+								className="flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-offset-2 col-span-2"
+							>
+								<Terminal className="size-4 mr-1" />
+								Open Terminal
+							</Button>
+						</DockerTerminalModal>
+					)}
 					{canUpdateService && (
 						<div className="flex flex-row items-center gap-2 justify-between rounded-md px-4 py-2 border col-span-2 md:col-span-1">
 							<span className="text-sm font-medium">Autodeploy</span>

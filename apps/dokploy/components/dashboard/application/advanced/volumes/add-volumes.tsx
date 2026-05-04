@@ -71,7 +71,7 @@ const mySchema = z.discriminatedUnion("type", [
 	z
 		.object({
 			type: z.literal("file"),
-			filePath: z.string().min(1, "File path required"),
+			filePath: z.string().optional(),
 			content: z.string().optional(),
 		})
 		.merge(mountSchema),
@@ -133,11 +133,18 @@ export const AddVolumes = ({
 					toast.error("Error creating the Volume mount");
 				});
 		} else if (data.type === "file") {
+			// File Path is the file name (relative to per-app storage on Docker
+			// Swarm; the ConfigMap key on K8s). If left blank, default it to the
+			// basename of Mount Path so users only need to fill out one of them.
+			const filePath =
+				data.filePath?.trim() ||
+				(data.mountPath || "").split("/").filter(Boolean).pop() ||
+				"file";
 			await mutateAsync({
 				serviceId,
 				content: data.content,
 				mountPath: data.mountPath,
-				filePath: data.filePath,
+				filePath,
 				type: data.type,
 				serviceType,
 			})
@@ -347,11 +354,11 @@ PORT=3000
 											name="filePath"
 											render={({ field }) => (
 												<FormItem>
-													<FormLabel>File Path</FormLabel>
+													<FormLabel>File Path (optional)</FormLabel>
 													<FormControl>
 														<FormControl>
 															<Input
-																placeholder="Name of the file"
+																placeholder="Defaults to the basename of Mount Path"
 																{...field}
 															/>
 														</FormControl>

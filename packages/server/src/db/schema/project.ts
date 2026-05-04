@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import { organization } from "./account";
 import { environments } from "./environment";
+import { kubernetesClusters } from "./kubernetes";
 import { projectTags } from "./tag";
 import { encryptedText } from "./utils";
 
@@ -23,6 +24,11 @@ export const projects = pgTable("project", {
 		.notNull()
 		.references(() => organization.id, { onDelete: "cascade" }),
 	env: encryptedText("env").notNull().default(""),
+	kubernetesNamespace: text("kubernetesNamespace"),
+	kubernetesId: text("kubernetesId").references(
+		() => kubernetesClusters.kubernetesId,
+		{ onDelete: "set null" },
+	),
 });
 
 export const projectRelations = relations(projects, ({ many, one }) => ({
@@ -32,6 +38,11 @@ export const projectRelations = relations(projects, ({ many, one }) => ({
 		fields: [projects.organizationId],
 		references: [organization.id],
 	}),
+	kubernetesCluster: one(kubernetesClusters, {
+		fields: [projects.kubernetesId],
+		references: [kubernetesClusters.kubernetesId],
+		relationName: "projectKubernetesCluster",
+	}),
 }));
 
 const createSchema = createInsertSchema(projects, {
@@ -39,12 +50,14 @@ const createSchema = createInsertSchema(projects, {
 	name: z.string().min(1),
 	description: z.string().optional(),
 	env: z.string().optional(),
+	kubernetesId: z.string().nullable().optional(),
 });
 
 export const apiCreateProject = createSchema.pick({
 	name: true,
 	description: true,
 	env: true,
+	kubernetesId: true,
 });
 
 export const apiFindOneProject = z.object({

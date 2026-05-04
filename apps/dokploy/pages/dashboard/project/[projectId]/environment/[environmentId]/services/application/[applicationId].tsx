@@ -27,6 +27,7 @@ import { ShowEnvironment } from "@/components/dashboard/application/environment/
 import { ShowGeneralApplication } from "@/components/dashboard/application/general/show";
 import { ShowIconSettings } from "@/components/dashboard/application/icon/show-icon-settings";
 import { ShowDockerLogs } from "@/components/dashboard/application/logs/show";
+import { ShowKubernetesPodLogs } from "@/components/dashboard/application/logs/show-kubernetes";
 import { ShowPatches } from "@/components/dashboard/application/patches/show-patches";
 import { ShowPreviewDeployments } from "@/components/dashboard/application/preview-deployments/show-preview-deployments";
 import { ShowSchedules } from "@/components/dashboard/application/schedules/show-schedules";
@@ -359,11 +360,17 @@ const Service = (
 									{permissions?.logs.read && (
 										<TabsContent value="logs">
 											<div className="flex flex-col gap-4 pt-2.5">
-												<ShowDockerLogs
-													appName={data?.appName || ""}
-													serverId={data?.serverId || ""}
-													serviceId={data?.applicationId}
-												/>
+												{data?.deploymentEngine === "kubernetes" ? (
+													<ShowKubernetesPodLogs
+														applicationId={applicationId}
+													/>
+												) : (
+													<ShowDockerLogs
+														appName={data?.appName || ""}
+														serverId={data?.serverId || ""}
+														serviceId={data?.applicationId}
+													/>
+												)}
 											</div>
 										</TabsContent>
 									)}

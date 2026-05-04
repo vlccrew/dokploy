@@ -16,6 +16,7 @@ export * from "./git-provider";
 export * from "./gitea";
 export * from "./github";
 export * from "./gitlab";
+export * from "./kubernetes";
 export * from "./libsql";
 export * from "./mariadb";
 export * from "./mongo";
