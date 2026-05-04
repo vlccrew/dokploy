@@ -69,6 +69,9 @@ export const applyTlsSecret = async (
 	secretName: string,
 	certificateData: string,
 	privateKey: string,
+	/** App slug — sets the `app.kubernetes.io/name` label so the TLS Secret is
+	 * cleaned up when the owning application is deleted. */
+	ownerAppSlug: string,
 ): Promise<void> => {
 	const body = {
 		apiVersion: "v1",
@@ -77,7 +80,10 @@ export const applyTlsSecret = async (
 		metadata: {
 			name: secretName,
 			namespace,
-			labels: { "app.kubernetes.io/managed-by": "dokploy" },
+			labels: {
+				"app.kubernetes.io/managed-by": "dokploy",
+				"app.kubernetes.io/name": ownerAppSlug,
+			},
 		},
 		data: {
 			"tls.crt": Buffer.from(certificateData).toString("base64"),

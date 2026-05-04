@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import { db } from "../../db";
 import { certificates as certificatesTable } from "../../db/schema";
 import type { Domain } from "../../services/domain";
@@ -143,12 +143,19 @@ export const manageIngress = async (
 		domain.certificateType === "custom" &&
 		domain.customCertResolver
 	) {
+		// The UI stores the certificate's `name` in `customCertResolver`
+		// (the field is named after the Traefik concept of a "cert resolver").
+		// Fall back to certificatePath for older rows / Traefik parity.
 		const cert = await db.query.certificates.findFirst({
-			where: eq(certificatesTable.certificatePath, domain.customCertResolver),
+			where: or(
+				eq(certificatesTable.name, domain.customCertResolver),
+				eq(certificatesTable.certificatePath, domain.customCertResolver),
+			),
 		});
 		if (cert) {
+			const slug = k8sName(application.appName);
 			const secretName = k8sName(
-				`${ingressName(k8sName(application.appName), domain.uniqueConfigKey)}-tls`,
+				`${ingressName(slug, domain.uniqueConfigKey)}-tls`,
 			);
 			await applyTlsSecret(
 				client,
@@ -156,6 +163,7 @@ export const manageIngress = async (
 				secretName,
 				cert.certificateData,
 				cert.privateKey,
+				slug,
 			);
 		}
 	}
