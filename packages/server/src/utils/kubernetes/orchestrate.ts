@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { findKubernetesClusterById } from "../../services/kubernetes";
 import type { InferResultType } from "../../types/with";
 import { getRegistryTag } from "../cluster/upload";
+import { getEnvironmentVariablesObject } from "../docker/utils";
 import { getKubernetesClient } from "./client";
 import {
 	applyDeployment,
@@ -13,7 +14,7 @@ import {
 import { isHttpError } from "./errors";
 import { manageIngress } from "./ingress";
 import { ensureNamespace } from "./namespace";
-import { applyImagePullSecret } from "./secrets";
+import { applyEnvSecret, applyImagePullSecret } from "./secrets";
 import { applyService, deleteService } from "./service";
 
 const makeLogger = (logPath?: string) => async (line: string) => {
@@ -74,6 +75,13 @@ export const orchestrateKubernetesDeploy = async ({
 		throw new TRPCError({ code: "BAD_REQUEST", message: msg });
 	}
 
+	const bindMount = (application.mounts ?? []).find((m) => m.type === "bind");
+	if (bindMount) {
+		const msg = `Bind mounts (hostPath) aren't supported on Kubernetes — convert mount '${bindMount.mountPath}' to a Volume mount or remove the bind.`;
+		await log(`❌ ${msg}`);
+		throw new TRPCError({ code: "BAD_REQUEST", message: msg });
+	}
+
 	const cluster = await findKubernetesClusterById(kubernetesId);
 	await log(`Resolved cluster '${cluster.name}'`);
 	const client = await getKubernetesClient(kubernetesId);
@@ -102,6 +110,25 @@ export const orchestrateKubernetesDeploy = async ({
 		await log("ℹ️  No registry attached — skipping image-pull secret");
 	}
 
+	const envObj = getEnvironmentVariablesObject(
+		application.env ?? null,
+		application.environment.project.env,
+		application.environment.env,
+	);
+	const envSecretName = await applyEnvSecret(
+		client,
+		namespace,
+		application.appName,
+		envObj,
+	);
+	if (envSecretName) {
+		await log(
+			`✅ Env Secret '${envSecretName}' applied (${Object.keys(envObj).length} vars)`,
+		);
+	} else {
+		await log("ℹ️  No env vars — skipping env Secret");
+	}
+
 	const image = isPrebuiltImage
 		? application.dockerImage!
 		: getRegistryTag(application.registry!, `${application.appName}:latest`);
@@ -113,6 +140,7 @@ export const orchestrateKubernetesDeploy = async ({
 		image,
 		namespace,
 		imagePullSecretName,
+		envSecretName,
 	);
 	await log(
 		`✅ Deployment '${appName}' applied (replicas: ${application.replicas})`,
@@ -171,7 +199,7 @@ export const cleanupKubernetesApplication = async (
 	input: CleanupInput,
 ): Promise<{ ok: boolean; errors: string[] }> => {
 	const errors: string[] = [];
-	let client;
+	let client: Awaited<ReturnType<typeof getKubernetesClient>>;
 	try {
 		client = await getKubernetesClient(input.kubernetesId);
 	} catch (err) {
@@ -251,6 +279,34 @@ export const cleanupKubernetesApplication = async (
 	} catch (err) {
 		errors.push(
 			`ConfigMap list failed: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+
+	// Owned Secrets — env Secret carries app.kubernetes.io/name=<slug>.
+	// The shared image-pull secret only has managed-by, so it's not selected
+	// here and is intentionally left in place for other apps in the namespace.
+	try {
+		const secrets = await client.core.listNamespacedSecret({
+			namespace: input.namespace,
+			labelSelector: `app.kubernetes.io/name=${slug}`,
+		});
+		for (const sec of secrets.items ?? []) {
+			const name = sec.metadata?.name;
+			if (!name) continue;
+			try {
+				await client.core.deleteNamespacedSecret({
+					name,
+					namespace: input.namespace,
+				});
+			} catch (err) {
+				if (!isHttpError(err) || err.code !== 404) {
+					errors.push(`Secret ${name} delete failed`);
+				}
+			}
+		}
+	} catch (err) {
+		errors.push(
+			`Secret list failed: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
 

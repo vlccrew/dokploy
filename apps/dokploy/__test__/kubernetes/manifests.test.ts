@@ -164,7 +164,7 @@ const baseDomain: Domain = {
 };
 
 describe("buildDeploymentManifest", () => {
-	test("emits a Deployment with replicas, env, and image-pull secret", () => {
+	test("emits a Deployment with replicas and image-pull secret; no inline env", () => {
 		const { deployment, appName, configMaps, pvcs } = buildDeploymentManifest({
 			application: baseApp,
 			image: "registry.example.com/test/test-app:latest",
@@ -176,12 +176,28 @@ describe("buildDeploymentManifest", () => {
 		expect(appName).toBe("test-app-abc123");
 		const container = deployment.spec?.template.spec?.containers?.[0];
 		expect(container?.image).toBe("registry.example.com/test/test-app:latest");
-		expect(container?.env).toEqual([{ name: "FOO", value: "bar" }]);
+		// env is now sourced from a Secret via envFrom; no inline env at all.
+		expect(container?.env).toBeUndefined();
+		expect(container?.envFrom).toBeUndefined();
 		expect(deployment.spec?.template.spec?.imagePullSecrets).toEqual([
 			{ name: "dokploy-registry" },
 		]);
 		expect(configMaps).toHaveLength(0);
 		expect(pvcs).toHaveLength(0);
+	});
+
+	test("uses envFrom secretRef when envFromSecretName is set", () => {
+		const { deployment } = buildDeploymentManifest({
+			application: baseApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+			envFromSecretName: "test-app-abc123-env",
+		});
+		const container = deployment.spec?.template.spec?.containers?.[0];
+		expect(container?.envFrom).toEqual([
+			{ secretRef: { name: "test-app-abc123-env" } },
+		]);
+		expect(container?.env).toBeUndefined();
 	});
 
 	test("maps cpu/memory limits to Kubernetes units", () => {
@@ -195,6 +211,86 @@ describe("buildDeploymentManifest", () => {
 			cpu: "1000m",
 			memory: "512Mi",
 		});
+	});
+
+	test("file mount: ConfigMap created, container volumeMount uses subPath", () => {
+		const fileApp = {
+			...baseApp,
+			mounts: [
+				{
+					mountId: "mount0001",
+					type: "file",
+					hostPath: null,
+					volumeName: null,
+					filePath: null,
+					content: "hello world",
+					mountPath: "/etc/welcome.conf",
+					serviceType: "application",
+					applicationId: "app-1",
+					composeId: null,
+					libsqlId: null,
+					mariadbId: null,
+					mongoId: null,
+					mysqlId: null,
+					postgresId: null,
+					redisId: null,
+				},
+			],
+		} as unknown as typeof baseApp;
+
+		const { deployment, configMaps } = buildDeploymentManifest({
+			application: fileApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+		});
+
+		expect(configMaps).toHaveLength(1);
+		expect(configMaps[0]!.data).toEqual({ "welcome.conf": "hello world" });
+
+		const container = deployment.spec?.template.spec?.containers?.[0];
+		const mount = container?.volumeMounts?.[0];
+		expect(mount?.mountPath).toBe("/etc/welcome.conf");
+		expect(mount?.subPath).toBe("welcome.conf");
+	});
+
+	test("volume mount: emits a 1Gi RWO PVC labeled with the app slug", () => {
+		const volApp = {
+			...baseApp,
+			mounts: [
+				{
+					mountId: "vol0001ab",
+					type: "volume",
+					hostPath: null,
+					volumeName: "data",
+					filePath: null,
+					content: null,
+					mountPath: "/data",
+					serviceType: "application",
+					applicationId: "app-1",
+					composeId: null,
+					libsqlId: null,
+					mariadbId: null,
+					mongoId: null,
+					mysqlId: null,
+					postgresId: null,
+					redisId: null,
+				},
+			],
+		} as unknown as typeof baseApp;
+
+		const { pvcs, deployment } = buildDeploymentManifest({
+			application: volApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+		});
+		expect(pvcs).toHaveLength(1);
+		expect(pvcs[0]!.spec?.accessModes).toEqual(["ReadWriteOnce"]);
+		expect(pvcs[0]!.metadata?.labels?.["app.kubernetes.io/name"]).toBe(
+			"test-app-abc123",
+		);
+		const container = deployment.spec?.template.spec?.containers?.[0];
+		expect(container?.volumeMounts?.[0]?.mountPath).toBe("/data");
+		expect(container?.volumeMounts?.[0]?.subPath).toBeUndefined();
 	});
 });
 

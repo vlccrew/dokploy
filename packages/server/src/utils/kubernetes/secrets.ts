@@ -1,5 +1,6 @@
 import type { Registry } from "../../services/registry";
 import type { KubernetesClient } from "./client";
+import { k8sName } from "./deployment";
 import { isHttpError } from "./errors";
 
 const IMAGE_PULL_SECRET_NAME = "dokploy-registry";
@@ -98,6 +99,68 @@ export const applyTlsSecret = async (
 			throw err;
 		}
 	}
+};
+
+/**
+ * Apply (create-or-replace) the per-application env Secret. Returns the
+ * Secret name when at least one env var is provided, `null` when the env
+ * map is empty (caller should then omit `envFrom` from the Deployment).
+ *
+ * Labels: `app.kubernetes.io/managed-by=dokploy`, `app.kubernetes.io/name=<slug>`
+ * — so `cleanupKubernetesApplication` can list-and-delete it on app delete.
+ */
+export const applyEnvSecret = async (
+	client: KubernetesClient,
+	namespace: string,
+	appName: string,
+	env: Record<string, string>,
+): Promise<string | null> => {
+	const slug = k8sName(appName);
+	const secretName = `${slug}-env`;
+
+	if (Object.keys(env).length === 0) {
+		try {
+			await client.core.deleteNamespacedSecret({
+				name: secretName,
+				namespace,
+			});
+		} catch (err) {
+			if (!isHttpError(err) || err.code !== 404) throw err;
+		}
+		return null;
+	}
+
+	const body = {
+		apiVersion: "v1",
+		kind: "Secret",
+		type: "Opaque",
+		metadata: {
+			name: secretName,
+			namespace,
+			labels: {
+				"app.kubernetes.io/managed-by": "dokploy",
+				"app.kubernetes.io/name": slug,
+			},
+		},
+		stringData: env,
+	};
+
+	try {
+		await client.core.readNamespacedSecret({ name: secretName, namespace });
+		await client.core.replaceNamespacedSecret({
+			name: secretName,
+			namespace,
+			body,
+		});
+	} catch (err) {
+		if (isHttpError(err) && err.code === 404) {
+			await client.core.createNamespacedSecret({ namespace, body });
+		} else {
+			throw err;
+		}
+	}
+
+	return secretName;
 };
 
 export { IMAGE_PULL_SECRET_NAME };

@@ -7,7 +7,6 @@ import type {
 } from "@kubernetes/client-node";
 import slugify from "slugify";
 import type { ApplicationNested } from "../builders";
-import { getEnvironmentVariablesObject } from "../docker/utils";
 import type { KubernetesClient } from "./client";
 import { isHttpError } from "./errors";
 import { IMAGE_PULL_SECRET_NAME } from "./secrets";
@@ -35,6 +34,9 @@ const parseCpu = (nanoCpus?: string | null): string | undefined => {
 interface VolumePiece {
 	name: string;
 	mountPath: string;
+	/** subPath within the volume — used for file mounts so the user's mountPath
+	 * lands as a single file rather than a directory containing the file. */
+	subPath?: string;
 	volume: Record<string, unknown>;
 	configMap?: { name: string; data: Record<string, string> };
 }
@@ -64,11 +66,15 @@ const buildVolumes = (
 		} else if (m.type === "file") {
 			fileIndex += 1;
 			const cmName = k8sName(`${appName}-files-${fileIndex}`);
+			// Derive a stable key for the file inside the ConfigMap from the
+			// user's mountPath so subPath works regardless of what they typed
+			// in the (legacy / Docker-only) `filePath` field.
 			const fileName =
-				(m.filePath || "").split("/").pop() || `file-${fileIndex}`;
+				(m.mountPath || "").split("/").pop() || `file-${fileIndex}`;
 			out.push({
 				name: baseName,
 				mountPath: m.mountPath,
+				subPath: fileName,
 				volume: {
 					configMap: {
 						name: cmName,
@@ -85,6 +91,10 @@ const buildVolumes = (
 	return out;
 };
 
+// Builds PVCs for `volume` mounts. Sizing is fixed at 1Gi/RWO and no
+// `storageClassName` is set, so the cluster's *default* StorageClass is used.
+// Docker Desktop k8s ships with a `hostpath` provisioner as default, which
+// auto-binds. Clusters without a default will leave PVCs in `Pending`.
 const buildPvcs = (
 	application: ApplicationNested,
 	appName: string,
@@ -98,7 +108,10 @@ const buildPvcs = (
 			metadata: {
 				name: k8sName(`${appName}-${m.mountId.slice(0, 8)}`),
 				namespace,
-				labels: { "app.kubernetes.io/managed-by": "dokploy" },
+				labels: {
+					"app.kubernetes.io/managed-by": "dokploy",
+					"app.kubernetes.io/name": k8sName(appName),
+				},
 			},
 			spec: {
 				accessModes: ["ReadWriteOnce"],
@@ -115,6 +128,12 @@ export interface DeploymentBuildInput {
 	 * (e.g. when deploying a public image with sourceType=docker).
 	 */
 	imagePullSecretName?: string | null;
+	/**
+	 * Secret to mount as env via `envFrom: [{ secretRef: ... }]`. Pass null
+	 * to skip — the application has no env vars or the secret-creation step
+	 * was skipped.
+	 */
+	envFromSecretName?: string | null;
 }
 
 export const buildDeploymentManifest = ({
@@ -122,6 +141,7 @@ export const buildDeploymentManifest = ({
 	image,
 	namespace,
 	imagePullSecretName = IMAGE_PULL_SECRET_NAME,
+	envFromSecretName = null,
 }: DeploymentBuildInput) => {
 	const appName = k8sName(application.appName);
 	const labels = {
@@ -130,17 +150,11 @@ export const buildDeploymentManifest = ({
 		"dokploy.io/application-id": application.applicationId,
 	};
 
-	const envObj = getEnvironmentVariablesObject(
-		application.env ?? null,
-		application.environment.project.env,
-		application.environment.env,
-	);
-	const env = Object.entries(envObj).map(([name, value]) => ({ name, value }));
-
 	const volumePieces = buildVolumes(application, appName);
-	const volumeMounts = volumePieces.map(({ name, mountPath }) => ({
+	const volumeMounts = volumePieces.map(({ name, mountPath, subPath }) => ({
 		name,
 		mountPath,
+		...(subPath && { subPath }),
 	}));
 	const volumes = volumePieces.map(({ name, volume }) => ({ name, ...volume }));
 
@@ -158,7 +172,9 @@ export const buildDeploymentManifest = ({
 		name: appName,
 		image,
 		imagePullPolicy: "Always",
-		env,
+		...(envFromSecretName && {
+			envFrom: [{ secretRef: { name: envFromSecretName } }],
+		}),
 		ports,
 		resources: {
 			...(cpuLimit || memoryLimit
@@ -239,12 +255,14 @@ export const applyDeployment = async (
 	image: string,
 	namespace: string,
 	imagePullSecretName: string | null = IMAGE_PULL_SECRET_NAME,
+	envFromSecretName: string | null = null,
 ): Promise<{ appName: string }> => {
 	const { deployment, configMaps, pvcs, appName } = buildDeploymentManifest({
 		application,
 		image,
 		namespace,
 		imagePullSecretName,
+		envFromSecretName,
 	});
 
 	for (const pvc of pvcs) {
