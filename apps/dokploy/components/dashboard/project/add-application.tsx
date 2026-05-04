@@ -55,25 +55,15 @@ const AddTemplateSchema = z
 		description: z.string().optional(),
 		serverId: z.string().optional(),
 		deploymentEngine: z.enum(["docker", "kubernetes"]),
-		kubernetesId: z.string().optional(),
 		registryId: z.string().optional(),
 	})
 	.superRefine((val, ctx) => {
-		if (val.deploymentEngine === "kubernetes") {
-			if (!val.kubernetesId) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["kubernetesId"],
-					message: "Select a Kubernetes cluster",
-				});
-			}
-			if (!val.registryId) {
-				ctx.addIssue({
-					code: z.ZodIssueCode.custom,
-					path: ["registryId"],
-					message: "A registry is required for Kubernetes deployments",
-				});
-			}
+		if (val.deploymentEngine === "kubernetes" && !val.registryId) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["registryId"],
+				message: "A registry is required for Kubernetes deployments",
+			});
 		}
 	});
 
@@ -90,12 +80,9 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 	const [visible, setVisible] = useState(false);
 	const slug = slugify(projectName);
 	const { data: servers } = api.server.withSSHKey.useQuery();
-	const { data: kubernetesClusters } = api.kubernetes.all.useQuery();
 	const { data: registries } = api.registry.all.useQuery();
 
 	const hasServers = servers && servers.length > 0;
-	const hasKubernetesClusters =
-		kubernetesClusters && kubernetesClusters.length > 0;
 	// Show dropdown logic based on cloud environment
 	// Cloud: show only if there are remote servers (no Dokploy option)
 	// Self-hosted: show only if there are remote servers (Dokploy is default, hide if no remote servers)
@@ -127,8 +114,6 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 					: data.serverId,
 			environmentId,
 			deploymentEngine: data.deploymentEngine,
-			kubernetesId:
-				data.deploymentEngine === "kubernetes" ? data.kubernetesId : undefined,
 			registryId:
 				data.deploymentEngine === "kubernetes" ? data.registryId : undefined,
 		})
@@ -207,13 +192,7 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 										</SelectTrigger>
 										<SelectContent>
 											<SelectItem value="docker">Docker / Swarm</SelectItem>
-											<SelectItem
-												value="kubernetes"
-												disabled={!hasKubernetesClusters}
-											>
-												Kubernetes
-												{!hasKubernetesClusters && " (no clusters registered)"}
-											</SelectItem>
+											<SelectItem value="kubernetes">Kubernetes</SelectItem>
 										</SelectContent>
 									</Select>
 									<FormMessage />
@@ -221,61 +200,28 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 							)}
 						/>
 						{deploymentEngine === "kubernetes" && (
-							<>
-								<FormField
-									control={form.control}
-									name="kubernetesId"
-									render={({ field }) => (
-										<FormItem>
-											<FormLabel>Kubernetes Cluster</FormLabel>
-											<Select
-												onValueChange={field.onChange}
-												value={field.value}
-											>
-												<SelectTrigger>
-													<SelectValue placeholder="Select a cluster" />
-												</SelectTrigger>
-												<SelectContent>
-													{kubernetesClusters?.map((c) => (
-														<SelectItem
-															key={c.kubernetesId}
-															value={c.kubernetesId}
-														>
-															{c.name}
-														</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
-											<FormMessage />
-										</FormItem>
-									)}
-								/>
-								<FormField
-									control={form.control}
-									name="registryId"
-									render={({ field }) => (
-										<FormItem>
-											<FormLabel>Image Registry</FormLabel>
-											<Select
-												onValueChange={field.onChange}
-												value={field.value}
-											>
-												<SelectTrigger>
-													<SelectValue placeholder="Select a registry" />
-												</SelectTrigger>
-												<SelectContent>
-													{registries?.map((r) => (
-														<SelectItem key={r.registryId} value={r.registryId}>
-															{r.registryName} ({r.registryUrl})
-														</SelectItem>
-													))}
-												</SelectContent>
-											</Select>
-											<FormMessage />
-										</FormItem>
-									)}
-								/>
-							</>
+							<FormField
+								control={form.control}
+								name="registryId"
+								render={({ field }) => (
+									<FormItem>
+										<FormLabel>Image Registry</FormLabel>
+										<Select onValueChange={field.onChange} value={field.value}>
+											<SelectTrigger>
+												<SelectValue placeholder="Select a registry" />
+											</SelectTrigger>
+											<SelectContent>
+												{registries?.map((r) => (
+													<SelectItem key={r.registryId} value={r.registryId}>
+														{r.registryName} ({r.registryUrl})
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+										<FormMessage />
+									</FormItem>
+								)}
+							/>
 						)}
 						{deploymentEngine === "docker" && shouldShowServerDropdown && (
 							<FormField

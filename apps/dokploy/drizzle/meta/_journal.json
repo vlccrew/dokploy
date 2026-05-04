@@ -1170,6 +1170,13 @@
       "when": 1777860308804,
       "tag": "0166_giant_northstar",
       "breakpoints": true
+    },
+    {
+      "idx": 167,
+      "version": "7",
+      "when": 1777867751226,
+      "tag": "0167_rare_captain_britain",
+      "breakpoints": true
     }
   ]
 }

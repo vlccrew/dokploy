@@ -110,7 +110,11 @@ export interface DeploymentBuildInput {
 	application: ApplicationNested;
 	image: string;
 	namespace: string;
-	imagePullSecretName?: string;
+	/**
+	 * Image-pull secret name. Pass null to omit `imagePullSecrets` entirely
+	 * (e.g. when deploying a public image with sourceType=docker).
+	 */
+	imagePullSecretName?: string | null;
 }
 
 export const buildDeploymentManifest = ({
@@ -186,7 +190,9 @@ export const buildDeploymentManifest = ({
 
 	const podSpec: V1PodSpec = {
 		containers: [container],
-		imagePullSecrets: [{ name: imagePullSecretName }],
+		...(imagePullSecretName && {
+			imagePullSecrets: [{ name: imagePullSecretName }],
+		}),
 		restartPolicy: "Always",
 		...(volumes.length > 0 && { volumes: volumes as V1PodSpec["volumes"] }),
 	};
@@ -232,11 +238,13 @@ export const applyDeployment = async (
 	application: ApplicationNested,
 	image: string,
 	namespace: string,
+	imagePullSecretName: string | null = IMAGE_PULL_SECRET_NAME,
 ): Promise<{ appName: string }> => {
 	const { deployment, configMaps, pvcs, appName } = buildDeploymentManifest({
 		application,
 		image,
 		namespace,
+		imagePullSecretName,
 	});
 
 	for (const pvc of pvcs) {

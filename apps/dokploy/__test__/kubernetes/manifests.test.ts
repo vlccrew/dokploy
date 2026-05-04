@@ -97,7 +97,6 @@ const baseApp: ApplicationNested = {
 	serverId: null,
 	buildRegistryId: null,
 	deploymentEngine: "kubernetes",
-	kubernetesId: "k8s-1",
 	previewDeployments: [],
 	patches: [],
 	rollbackRegistry: null,
@@ -138,6 +137,7 @@ const baseApp: ApplicationNested = {
 			env: "",
 			organizationId: "org-1",
 			kubernetesNamespace: "dokploy-test-proj1",
+			kubernetesId: "k8s-1",
 		},
 	},
 } as unknown as ApplicationNested;

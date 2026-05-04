@@ -3,10 +3,42 @@ import { PassThrough } from "node:stream";
 import {
 	findKubernetesClusterById,
 	getKubernetesClient,
+	k8sName,
 	Log,
 	validateRequest,
 } from "@dokploy/server";
+import { db } from "@dokploy/server/db";
+import { applications } from "@dokploy/server/db/schema";
+import { eq } from "drizzle-orm";
 import { WebSocketServer } from "ws";
+
+interface ResolvedTarget {
+	kubernetesId: string;
+	namespace: string;
+	labelSelector: string;
+	organizationId: string;
+}
+
+const resolveFromApplication = async (
+	applicationId: string,
+): Promise<ResolvedTarget | null> => {
+	const app = await db.query.applications.findFirst({
+		where: eq(applications.applicationId, applicationId),
+		with: {
+			environment: { with: { project: true } },
+		},
+	});
+	if (!app) return null;
+	const kubernetesId = app.environment.project.kubernetesId;
+	const namespace = app.environment.project.kubernetesNamespace;
+	if (!kubernetesId || !namespace) return null;
+	return {
+		kubernetesId,
+		namespace,
+		labelSelector: `app.kubernetes.io/name=${k8sName(app.appName)}`,
+		organizationId: app.environment.project.organizationId,
+	};
+};
 
 export const setupKubernetesPodLogsWebSocketServer = (
 	server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>,
@@ -27,9 +59,7 @@ export const setupKubernetesPodLogsWebSocketServer = (
 
 	wss.on("connection", async (ws, req) => {
 		const url = new URL(req.url || "", `http://${req.headers.host}`);
-		const kubernetesId = url.searchParams.get("kubernetesId");
-		const namespace = url.searchParams.get("namespace");
-		const labelSelector = url.searchParams.get("labelSelector");
+		const applicationId = url.searchParams.get("applicationId");
 		const tailParam = url.searchParams.get("tail") ?? "100";
 		const tailLines = Number.parseInt(tailParam, 10);
 
@@ -38,8 +68,8 @@ export const setupKubernetesPodLogsWebSocketServer = (
 			ws.close();
 			return;
 		}
-		if (!kubernetesId || !namespace || !labelSelector) {
-			ws.close(4000, "kubernetesId, namespace, and labelSelector are required");
+		if (!applicationId) {
+			ws.close(4000, "applicationId is required");
 			return;
 		}
 		if (Number.isNaN(tailLines) || tailLines <= 0 || tailLines > 10_000) {
@@ -47,22 +77,35 @@ export const setupKubernetesPodLogsWebSocketServer = (
 			return;
 		}
 
-		const cluster = await findKubernetesClusterById(kubernetesId);
+		const target = await resolveFromApplication(applicationId);
+		if (!target) {
+			ws.send(
+				"This application is not bound to a Kubernetes cluster yet. Deploy it first.",
+			);
+			ws.close(4004, "No k8s binding");
+			return;
+		}
+		if (target.organizationId !== session.activeOrganizationId) {
+			ws.close();
+			return;
+		}
+
+		const cluster = await findKubernetesClusterById(target.kubernetesId);
 		if (cluster.organizationId !== session.activeOrganizationId) {
 			ws.close();
 			return;
 		}
 
 		try {
-			const client = await getKubernetesClient(kubernetesId);
+			const client = await getKubernetesClient(target.kubernetesId);
 			const podsResp = await client.core.listNamespacedPod({
-				namespace,
-				labelSelector,
+				namespace: target.namespace,
+				labelSelector: target.labelSelector,
 				limit: 1,
 			});
 			const podName = podsResp.items?.[0]?.metadata?.name;
 			if (!podName) {
-				ws.send("No pods match the selector yet — waiting...");
+				ws.send("No pods match yet — waiting for a running pod...");
 				ws.close(4004, "No matching pods");
 				return;
 			}
@@ -73,7 +116,7 @@ export const setupKubernetesPodLogsWebSocketServer = (
 				if (ws.readyState === ws.OPEN) ws.send(chunk.toString("utf8"));
 			});
 
-			const controller = await log.log(namespace, podName, "", stream, {
+			const controller = await log.log(target.namespace, podName, "", stream, {
 				follow: true,
 				tailLines,
 				timestamps: true,

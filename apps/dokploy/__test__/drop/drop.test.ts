@@ -87,6 +87,7 @@ const baseApp: ApplicationNested = {
 			createdAt: "",
 			projectId: "",
 			kubernetesNamespace: null,
+			kubernetesId: null,
 		},
 	},
 	buildArgs: null,
@@ -155,7 +156,6 @@ const baseApp: ApplicationNested = {
 	stopGracePeriodSwarm: null,
 	ulimitsSwarm: null,
 	deploymentEngine: "docker",
-	kubernetesId: null,
 };
 
 /**

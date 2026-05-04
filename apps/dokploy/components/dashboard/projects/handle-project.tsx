@@ -28,6 +28,13 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/utils/api";
 
@@ -52,6 +59,7 @@ const AddProjectSchema = z.object({
 		})
 		.transform((name) => name.trim()),
 	description: z.string().optional(),
+	kubernetesId: z.string().optional(),
 });
 
 type AddProject = z.infer<typeof AddProjectSchema>;
@@ -79,6 +87,7 @@ export const HandleProject = ({ projectId }: Props) => {
 	);
 
 	const { data: availableTags = [] } = api.tag.all.useQuery();
+	const { data: kubernetesClusters } = api.kubernetes.all.useQuery();
 	const bulkAssignMutation = api.tag.bulkAssign.useMutation();
 
 	const router = useRouter();
@@ -94,6 +103,7 @@ export const HandleProject = ({ projectId }: Props) => {
 		form.reset({
 			description: data?.description ?? "",
 			name: data?.name ?? "",
+			kubernetesId: data?.kubernetesId ?? undefined,
 		});
 		// Load existing tags when editing a project
 		if (data?.projectTags) {
@@ -109,6 +119,7 @@ export const HandleProject = ({ projectId }: Props) => {
 			name: data.name,
 			description: data.description,
 			projectId: projectId || "",
+			kubernetesId: data.kubernetesId || null,
 		})
 			.then(async (data) => {
 				// Assign tags to the project (both create and update)
@@ -213,6 +224,37 @@ export const HandleProject = ({ projectId }: Props) => {
 										/>
 									</FormControl>
 
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+
+						<FormField
+							control={form.control}
+							name="kubernetesId"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel>Kubernetes Cluster (optional)</FormLabel>
+									<Select
+										onValueChange={(v) =>
+											field.onChange(v === "__none__" ? undefined : v)
+										}
+										value={field.value ?? "__none__"}
+									>
+										<SelectTrigger>
+											<SelectValue placeholder="No cluster (Docker only)" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="__none__">
+												No cluster (Docker only)
+											</SelectItem>
+											{kubernetesClusters?.map((c) => (
+												<SelectItem key={c.kubernetesId} value={c.kubernetesId}>
+													{c.name}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
 									<FormMessage />
 								</FormItem>
 							)}

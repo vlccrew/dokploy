@@ -119,7 +119,6 @@ export const findApplicationById = async (applicationId: string) => {
 			previewDeployments: true,
 			buildRegistry: true,
 			rollbackRegistry: true,
-			kubernetesCluster: true,
 		},
 	});
 	if (!application) {
@@ -194,40 +193,52 @@ export const deployApplication = async ({
 	});
 
 	try {
-		let command = "set -e;";
-		if (application.sourceType === "github") {
-			command += await cloneGithubRepository(applicationEntity);
-		} else if (application.sourceType === "gitlab") {
-			command += await cloneGitlabRepository(applicationEntity);
-		} else if (application.sourceType === "gitea") {
-			command += await cloneGiteaRepository(applicationEntity);
-		} else if (application.sourceType === "bitbucket") {
-			command += await cloneBitbucketRepository(applicationEntity);
-		} else if (application.sourceType === "git") {
-			command += await cloneGitRepository(applicationEntity);
-		} else if (application.sourceType === "docker") {
-			command += await buildRemoteDocker(application);
-		}
+		// For Kubernetes + sourceType=docker, skip the entire local build/push
+		// pipeline — the cluster pulls the public image directly via the
+		// Deployment manifest. No clone, no local pull, no registry round-trip.
+		const skipBuildForK8sDocker =
+			application.deploymentEngine === "kubernetes" &&
+			application.sourceType === "docker";
 
-		if (application.sourceType !== "docker") {
-			command += await generateApplyPatchesCommand({
-				id: application.applicationId,
-				type: "application",
-				serverId,
-			});
-		}
+		if (!skipBuildForK8sDocker) {
+			let command = "set -e;";
+			if (application.sourceType === "github") {
+				command += await cloneGithubRepository(applicationEntity);
+			} else if (application.sourceType === "gitlab") {
+				command += await cloneGitlabRepository(applicationEntity);
+			} else if (application.sourceType === "gitea") {
+				command += await cloneGiteaRepository(applicationEntity);
+			} else if (application.sourceType === "bitbucket") {
+				command += await cloneBitbucketRepository(applicationEntity);
+			} else if (application.sourceType === "git") {
+				command += await cloneGitRepository(applicationEntity);
+			} else if (application.sourceType === "docker") {
+				command += await buildRemoteDocker(application);
+			}
 
-		command += await getBuildCommand(application);
+			if (application.sourceType !== "docker") {
+				command += await generateApplyPatchesCommand({
+					id: application.applicationId,
+					type: "application",
+					serverId,
+				});
+			}
 
-		const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-		if (serverId) {
-			await execAsyncRemote(serverId, commandWithLog);
-		} else {
-			await execAsync(commandWithLog);
+			command += await getBuildCommand(application);
+
+			const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
+			if (serverId) {
+				await execAsyncRemote(serverId, commandWithLog);
+			} else {
+				await execAsync(commandWithLog);
+			}
 		}
 
 		if (application.deploymentEngine === "kubernetes") {
-			await orchestrateKubernetesDeploy({ application });
+			await orchestrateKubernetesDeploy({
+				application,
+				logPath: deployment.logPath,
+			});
 		} else {
 			await mechanizeDockerContainer(application);
 		}
@@ -312,17 +323,25 @@ export const rebuildApplication = async ({
 	});
 
 	try {
-		let command = "set -e;";
-		// Check case for docker only
-		command += await getBuildCommand(application);
-		const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-		if (serverId) {
-			await execAsyncRemote(serverId, commandWithLog);
-		} else {
-			await execAsync(commandWithLog);
+		const skipBuildForK8sDocker =
+			application.deploymentEngine === "kubernetes" &&
+			application.sourceType === "docker";
+
+		if (!skipBuildForK8sDocker) {
+			let command = "set -e;";
+			command += await getBuildCommand(application);
+			const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
+			if (serverId) {
+				await execAsyncRemote(serverId, commandWithLog);
+			} else {
+				await execAsync(commandWithLog);
+			}
 		}
 		if (application.deploymentEngine === "kubernetes") {
-			await orchestrateKubernetesDeploy({ application });
+			await orchestrateKubernetesDeploy({
+				application,
+				logPath: deployment.logPath,
+			});
 		} else {
 			await mechanizeDockerContainer(application);
 		}

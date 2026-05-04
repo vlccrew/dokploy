@@ -18,7 +18,6 @@ import { environments } from "./environment";
 import { gitea } from "./gitea";
 import { github } from "./github";
 import { gitlab } from "./gitlab";
-import { kubernetesClusters } from "./kubernetes";
 import { mounts } from "./mount";
 import { patch } from "./patch";
 import { ports } from "./port";
@@ -236,10 +235,6 @@ export const applications = pgTable("application", {
 	deploymentEngine: deploymentEngine("deploymentEngine")
 		.notNull()
 		.default("docker"),
-	kubernetesId: text("kubernetesId").references(
-		() => kubernetesClusters.kubernetesId,
-		{ onDelete: "set null" },
-	),
 });
 
 export const applicationsRelations = relations(
@@ -289,11 +284,6 @@ export const applicationsRelations = relations(
 			fields: [applications.buildServerId],
 			references: [server.serverId],
 			relationName: "applicationBuildServer",
-		}),
-		kubernetesCluster: one(kubernetesClusters, {
-			fields: [applications.kubernetesId],
-			references: [kubernetesClusters.kubernetesId],
-			relationName: "applicationKubernetesCluster",
 		}),
 		buildRegistry: one(registry, {
 			fields: [applications.buildRegistryId],
@@ -397,7 +387,6 @@ const createSchema = createInsertSchema(applications, {
 		.nullable()
 		.optional(),
 	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
-	kubernetesId: z.string().nullable().optional(),
 });
 
 export const apiCreateApplication = createSchema.pick({
@@ -407,7 +396,6 @@ export const apiCreateApplication = createSchema.pick({
 	environmentId: true,
 	serverId: true,
 	deploymentEngine: true,
-	kubernetesId: true,
 	registryId: true,
 });
 

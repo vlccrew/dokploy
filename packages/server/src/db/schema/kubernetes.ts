@@ -4,7 +4,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { organization } from "./account";
-import { applications } from "./application";
+import { projects } from "./project";
 import { registry } from "./registry";
 
 export const kubernetesClusters = pgTable("kubernetes_cluster", {
@@ -45,8 +45,8 @@ export const kubernetesClustersRelations = relations(
 			references: [registry.registryId],
 			relationName: "kubernetesClusterDefaultRegistry",
 		}),
-		applications: many(applications, {
-			relationName: "applicationKubernetesCluster",
+		projects: many(projects, {
+			relationName: "projectKubernetesCluster",
 		}),
 	}),
 );

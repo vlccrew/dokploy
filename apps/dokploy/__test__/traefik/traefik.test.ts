@@ -65,6 +65,7 @@ const baseApp: ApplicationNested = {
 			createdAt: "",
 			projectId: "",
 			kubernetesNamespace: null,
+			kubernetesId: null,
 		},
 	},
 	buildPath: "/",
@@ -129,7 +130,6 @@ const baseApp: ApplicationNested = {
 	stopGracePeriodSwarm: null,
 	ulimitsSwarm: null,
 	deploymentEngine: "docker",
-	kubernetesId: null,
 };
 
 const baseDomain: Domain = {
