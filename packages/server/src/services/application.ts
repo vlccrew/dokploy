@@ -1,3 +1,4 @@
+import { appendFile } from "node:fs/promises";
 import { docker } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import {
@@ -52,6 +53,16 @@ import {
 	updatePreviewDeployment,
 } from "./preview-deployment";
 import { validUniqueServerAppName } from "./project";
+
+const writeBanner = async (logPath: string, title: string) => {
+	const bar = "═".repeat(60);
+	try {
+		await appendFile(logPath, `\n${bar}\n  ${title}\n${bar}\n`);
+	} catch {
+		// best-effort
+	}
+};
+
 export type Application = typeof applications.$inferSelect;
 
 export const createApplication = async (
@@ -201,6 +212,7 @@ export const deployApplication = async ({
 			application.sourceType === "docker";
 
 		if (!skipBuildForK8sDocker) {
+			await writeBanner(deployment.logPath, "BUILD");
 			let command = "set -e;";
 			if (application.sourceType === "github") {
 				command += await cloneGithubRepository(applicationEntity);
@@ -235,6 +247,7 @@ export const deployApplication = async ({
 		}
 
 		if (application.deploymentEngine === "kubernetes") {
+			await writeBanner(deployment.logPath, "KUBE APPLY");
 			await orchestrateKubernetesDeploy({
 				application,
 				logPath: deployment.logPath,
@@ -328,6 +341,7 @@ export const rebuildApplication = async ({
 			application.sourceType === "docker";
 
 		if (!skipBuildForK8sDocker) {
+			await writeBanner(deployment.logPath, "BUILD (rebuild)");
 			let command = "set -e;";
 			command += await getBuildCommand(application);
 			const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
@@ -338,6 +352,7 @@ export const rebuildApplication = async ({
 			}
 		}
 		if (application.deploymentEngine === "kubernetes") {
+			await writeBanner(deployment.logPath, "KUBE APPLY");
 			await orchestrateKubernetesDeploy({
 				application,
 				logPath: deployment.logPath,

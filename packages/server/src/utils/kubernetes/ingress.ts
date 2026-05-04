@@ -100,6 +100,7 @@ export const buildIngressManifest = ({
 			labels: {
 				"app.kubernetes.io/managed-by": "dokploy",
 				"app.kubernetes.io/name": appName,
+				"dokploy.io/application-id": application.applicationId,
 				"dokploy.io/domain-id": domain.domainId,
 			},
 			annotations,

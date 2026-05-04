@@ -4,14 +4,37 @@ import {
 	Exec,
 	findKubernetesClusterById,
 	getKubernetesClient,
+	k8sName,
 	validateRequest,
 } from "@dokploy/server";
+import { db } from "@dokploy/server/db";
+import { applications } from "@dokploy/server/db/schema";
+import { eq } from "drizzle-orm";
 import { WebSocketServer } from "ws";
 
 interface ExecStatus {
 	status?: string;
 	message?: string;
 }
+
+const ALLOWED_SHELLS = new Set(["/bin/sh", "/bin/bash", "sh", "bash"]);
+
+const resolveFromApplication = async (applicationId: string) => {
+	const app = await db.query.applications.findFirst({
+		where: eq(applications.applicationId, applicationId),
+		with: { environment: { with: { project: true } } },
+	});
+	if (!app) return null;
+	const kubernetesId = app.environment.project.kubernetesId;
+	const namespace = app.environment.project.kubernetesNamespace;
+	if (!kubernetesId || !namespace) return null;
+	return {
+		kubernetesId,
+		namespace,
+		labelSelector: `app.kubernetes.io/name=${k8sName(app.appName)}`,
+		organizationId: app.environment.project.organizationId,
+	};
+};
 
 export const setupKubernetesPodExecWebSocketServer = (
 	server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>,
@@ -32,30 +55,59 @@ export const setupKubernetesPodExecWebSocketServer = (
 
 	wss.on("connection", async (ws, req) => {
 		const url = new URL(req.url || "", `http://${req.headers.host}`);
-		const kubernetesId = url.searchParams.get("kubernetesId");
-		const namespace = url.searchParams.get("namespace");
-		const podName = url.searchParams.get("podName");
-		const containerName = url.searchParams.get("containerName") ?? "";
-		const command = url.searchParams.get("command") ?? "/bin/sh";
+		const applicationId = url.searchParams.get("applicationId");
+		const requestedShell = url.searchParams.get("activeWay") ?? "/bin/sh";
+		const command = ALLOWED_SHELLS.has(requestedShell)
+			? requestedShell.startsWith("/")
+				? requestedShell
+				: `/bin/${requestedShell}`
+			: "/bin/sh";
 
 		const { user, session } = await validateRequest(req);
 		if (!user || !session) {
 			ws.close();
 			return;
 		}
-		if (!kubernetesId || !namespace || !podName) {
-			ws.close(4000, "kubernetesId, namespace, podName are required");
+		if (!applicationId) {
+			ws.close(4000, "applicationId is required");
 			return;
 		}
 
-		const cluster = await findKubernetesClusterById(kubernetesId);
+		const target = await resolveFromApplication(applicationId);
+		if (!target) {
+			ws.send(
+				"This application is not bound to a Kubernetes cluster yet. Deploy it first.",
+			);
+			ws.close(4004, "No k8s binding");
+			return;
+		}
+		if (target.organizationId !== session.activeOrganizationId) {
+			ws.close();
+			return;
+		}
+
+		const cluster = await findKubernetesClusterById(target.kubernetesId);
 		if (cluster.organizationId !== session.activeOrganizationId) {
 			ws.close();
 			return;
 		}
 
 		try {
-			const client = await getKubernetesClient(kubernetesId);
+			const client = await getKubernetesClient(target.kubernetesId);
+			const podsResp = await client.core.listNamespacedPod({
+				namespace: target.namespace,
+				labelSelector: target.labelSelector,
+				limit: 1,
+			});
+			const podName = podsResp.items?.[0]?.metadata?.name;
+			if (!podName) {
+				ws.send("No running pod found for this application yet.");
+				ws.close(4004, "No matching pods");
+				return;
+			}
+			const containerName =
+				podsResp.items?.[0]?.spec?.containers?.[0]?.name ?? "";
+
 			const exec = new Exec(client.kubeConfig);
 			const stdout = new PassThrough();
 			const stderr = new PassThrough();
@@ -69,7 +121,7 @@ export const setupKubernetesPodExecWebSocketServer = (
 			});
 
 			const wsHandle = await exec.exec(
-				namespace,
+				target.namespace,
 				podName,
 				containerName,
 				[command],
@@ -78,10 +130,10 @@ export const setupKubernetesPodExecWebSocketServer = (
 				stdin,
 				true,
 				(status: ExecStatus) => {
-					if (status.status === "Failure" && ws.readyState === ws.OPEN) {
+					if (ws.readyState === ws.OPEN && status.status === "Failure") {
 						ws.send(`\nProcess exited: ${status.message ?? "failure"}`);
 					}
-					ws.close();
+					if (ws.readyState === ws.OPEN) ws.close();
 				},
 			);
 

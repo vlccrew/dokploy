@@ -4,11 +4,17 @@ import { findKubernetesClusterById } from "../../services/kubernetes";
 import type { InferResultType } from "../../types/with";
 import { getRegistryTag } from "../cluster/upload";
 import { getKubernetesClient } from "./client";
-import { applyDeployment, waitForRollout } from "./deployment";
+import {
+	applyDeployment,
+	deleteDeployment,
+	k8sName,
+	waitForRollout,
+} from "./deployment";
+import { isHttpError } from "./errors";
 import { manageIngress } from "./ingress";
 import { ensureNamespace } from "./namespace";
 import { applyImagePullSecret } from "./secrets";
-import { applyService } from "./service";
+import { applyService, deleteService } from "./service";
 
 const makeLogger = (logPath?: string) => async (line: string) => {
 	const stamped = `[${new Date().toISOString()}] ${line}\n`;
@@ -137,4 +143,116 @@ export const orchestrateKubernetesDeploy = async ({
 		throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: msg });
 	}
 	await log("🎉 Rollout complete");
+};
+
+/**
+ * Tear down the Kubernetes resources owned by an application.
+ *
+ * Deletes: Deployment, Service, all Ingresses owned by the application
+ * (matched by the `dokploy.io/application-id` label), and any ConfigMaps
+ * we created for file-mounts (matched by app name prefix + managed-by label).
+ *
+ * Intentionally skips:
+ * - PVCs   — they hold user data; require explicit "delete data" intent.
+ * - Image-pull secret — shared across all apps in the namespace.
+ * - Namespace — shared with the project; deleted only on project teardown.
+ *
+ * Best-effort: returns instead of throwing if anything fails. The caller is
+ * expected to be a delete handler that has already removed the DB rows.
+ */
+export interface CleanupInput {
+	applicationId: string;
+	appName: string;
+	namespace: string;
+	kubernetesId: string;
+}
+
+export const cleanupKubernetesApplication = async (
+	input: CleanupInput,
+): Promise<{ ok: boolean; errors: string[] }> => {
+	const errors: string[] = [];
+	let client;
+	try {
+		client = await getKubernetesClient(input.kubernetesId);
+	} catch (err) {
+		return {
+			ok: false,
+			errors: [
+				`Could not reach cluster: ${err instanceof Error ? err.message : String(err)}`,
+			],
+		};
+	}
+
+	const slug = k8sName(input.appName);
+
+	try {
+		await deleteDeployment(client, slug, input.namespace);
+	} catch (err) {
+		errors.push(
+			`Deployment delete failed: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+
+	try {
+		await deleteService(client, slug, input.namespace);
+	} catch (err) {
+		errors.push(
+			`Service delete failed: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+
+	try {
+		// Match by app.kubernetes.io/name (the slugged appName) so the selector
+		// covers both ingresses created before we started labeling with
+		// application-id and any new ones.
+		const ingresses = await client.networking.listNamespacedIngress({
+			namespace: input.namespace,
+			labelSelector: `app.kubernetes.io/name=${slug}`,
+		});
+		for (const ing of ingresses.items ?? []) {
+			const name = ing.metadata?.name;
+			if (!name) continue;
+			try {
+				await client.networking.deleteNamespacedIngress({
+					name,
+					namespace: input.namespace,
+				});
+			} catch (err) {
+				if (!isHttpError(err) || err.code !== 404) {
+					errors.push(`Ingress ${name} delete failed`);
+				}
+			}
+		}
+	} catch (err) {
+		errors.push(
+			`Ingress list failed: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+
+	try {
+		const cms = await client.core.listNamespacedConfigMap({
+			namespace: input.namespace,
+			labelSelector: "app.kubernetes.io/managed-by=dokploy",
+		});
+		for (const cm of cms.items ?? []) {
+			const name = cm.metadata?.name;
+			if (!name || !name.startsWith(`${slug}-files-`)) continue;
+			try {
+				await client.core.deleteNamespacedConfigMap({
+					name,
+					namespace: input.namespace,
+				});
+			} catch (err) {
+				if (!isHttpError(err) || err.code !== 404) {
+					errors.push(`ConfigMap ${name} delete failed`);
+				}
+			}
+		}
+	} catch (err) {
+		errors.push(
+			`ConfigMap list failed: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+
+	return { ok: errors.length === 0, errors };
 };
