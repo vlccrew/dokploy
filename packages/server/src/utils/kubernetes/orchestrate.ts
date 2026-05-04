@@ -13,7 +13,7 @@ import {
 } from "./deployment";
 import { isHttpError } from "./errors";
 import { manageIngress } from "./ingress";
-import { ensureNamespace } from "./namespace";
+import { deleteNamespace, ensureNamespace } from "./namespace";
 import { applyEnvSecret, applyImagePullSecret } from "./secrets";
 import { applyService, deleteService } from "./service";
 
@@ -311,4 +311,28 @@ export const cleanupKubernetesApplication = async (
 	}
 
 	return { ok: errors.length === 0, errors };
+};
+
+/**
+ * Tear down the Kubernetes namespace for a project. Kubernetes cascades the
+ * delete to every owned resource inside (Deployments, Services, Ingresses,
+ * ConfigMaps, Secrets, PVCs — including user data on PVCs). Project deletion
+ * is the explicit "I want everything gone" intent that justifies wiping data.
+ *
+ * Best-effort: returns ok=false instead of throwing if the cluster call fails.
+ */
+export const cleanupKubernetesProject = async (input: {
+	kubernetesId: string;
+	namespace: string;
+}): Promise<{ ok: boolean; error?: string }> => {
+	try {
+		const client = await getKubernetesClient(input.kubernetesId);
+		await deleteNamespace(client, input.namespace);
+		return { ok: true };
+	} catch (err) {
+		return {
+			ok: false,
+			error: err instanceof Error ? err.message : String(err),
+		};
+	}
 };

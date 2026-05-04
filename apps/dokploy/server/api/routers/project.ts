@@ -1,4 +1,5 @@
 import {
+	cleanupKubernetesProject,
 	createApplication,
 	createBackup,
 	createCompose,
@@ -720,7 +721,24 @@ export const projectRouter = createTRPCRouter({
 					});
 				}
 				await checkProjectAccess(ctx, "delete", input.projectId);
+
+				// Capture k8s binding before the DB cascade clears it. Defer the
+				// cluster teardown until after the DB delete succeeds.
+				const k8sNamespace = currentProject.kubernetesNamespace;
+				const k8sId = currentProject.kubernetesId;
+
 				const deletedProject = await deleteProject(input.projectId);
+
+				if (k8sNamespace && k8sId) {
+					try {
+						await cleanupKubernetesProject({
+							kubernetesId: k8sId,
+							namespace: k8sNamespace,
+						});
+					} catch {
+						// best-effort; log only — namespace can be cleaned up manually
+					}
+				}
 
 				await audit(ctx, {
 					action: "delete",
