@@ -177,9 +177,10 @@ const createBetterAuth = () =>
 		onAPIError: {
 			errorURL: "/",
 		},
-		...(!IS_CLOUD
-			? {
-					advanced: {
+		advanced: {
+			trustedProxyHeaders: true,
+			...(!IS_CLOUD
+				? {
 						useSecureCookies: false,
 						defaultCookieAttributes: {
 							sameSite: "lax",
@@ -187,9 +188,9 @@ const createBetterAuth = () =>
 							httpOnly: true,
 							path: "/",
 						},
-					},
-				}
-			: {}),
+					}
+				: {}),
+		},
 
 		account: {
 			accountLinking: {
