@@ -20,6 +20,8 @@ import { setupDockerContainerLogsWebSocketServer } from "./wss/docker-container-
 import { setupDockerContainerTerminalWebSocketServer } from "./wss/docker-container-terminal";
 import { setupDockerStatsMonitoringSocketServer } from "./wss/docker-stats";
 import { setupDrawerLogsWebSocketServer } from "./wss/drawer-logs";
+import { setupKubernetesPodExecWebSocketServer } from "./wss/kubernetes-pod-exec";
+import { setupKubernetesPodLogsWebSocketServer } from "./wss/kubernetes-pod-logs";
 import { setupDeploymentLogsWebSocketServer } from "./wss/listen-deployment";
 import { setupTerminalWebSocketServer } from "./wss/terminal";
 
@@ -52,6 +54,8 @@ void app.prepare().then(async () => {
 		setupDockerContainerLogsWebSocketServer(server);
 		setupDockerContainerTerminalWebSocketServer(server);
 		setupTerminalWebSocketServer(server);
+		setupKubernetesPodLogsWebSocketServer(server);
+		setupKubernetesPodExecWebSocketServer(server);
 		if (!IS_CLOUD) {
 			setupDockerStatsMonitoringSocketServer(server);
 		}

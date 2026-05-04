@@ -22,6 +22,7 @@ export const projects = pgTable("project", {
 		.notNull()
 		.references(() => organization.id, { onDelete: "cascade" }),
 	env: text("env").notNull().default(""),
+	kubernetesNamespace: text("kubernetesNamespace"),
 });
 
 export const projectRelations = relations(projects, ({ many, one }) => ({

@@ -18,6 +18,7 @@ import { environments } from "./environment";
 import { gitea } from "./gitea";
 import { github } from "./github";
 import { gitlab } from "./gitlab";
+import { kubernetesClusters } from "./kubernetes";
 import { mounts } from "./mount";
 import { patch } from "./patch";
 import { ports } from "./port";
@@ -68,6 +69,11 @@ export const buildType = pgEnum("buildType", [
 	"nixpacks",
 	"static",
 	"railpack",
+]);
+
+export const deploymentEngine = pgEnum("deploymentEngine", [
+	"docker",
+	"kubernetes",
 ]);
 
 export const applications = pgTable("application", {
@@ -227,6 +233,13 @@ export const applications = pgTable("application", {
 			onDelete: "set null",
 		},
 	),
+	deploymentEngine: deploymentEngine("deploymentEngine")
+		.notNull()
+		.default("docker"),
+	kubernetesId: text("kubernetesId").references(
+		() => kubernetesClusters.kubernetesId,
+		{ onDelete: "set null" },
+	),
 });
 
 export const applicationsRelations = relations(
@@ -276,6 +289,11 @@ export const applicationsRelations = relations(
 			fields: [applications.buildServerId],
 			references: [server.serverId],
 			relationName: "applicationBuildServer",
+		}),
+		kubernetesCluster: one(kubernetesClusters, {
+			fields: [applications.kubernetesId],
+			references: [kubernetesClusters.kubernetesId],
+			relationName: "applicationKubernetesCluster",
 		}),
 		buildRegistry: one(registry, {
 			fields: [applications.buildRegistryId],
@@ -378,6 +396,8 @@ const createSchema = createInsertSchema(applications, {
 		.max(2 * 1024 * 1024, "Icon must be less than 2MB")
 		.nullable()
 		.optional(),
+	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
+	kubernetesId: z.string().nullable().optional(),
 });
 
 export const apiCreateApplication = createSchema.pick({
@@ -386,6 +406,9 @@ export const apiCreateApplication = createSchema.pick({
 	description: true,
 	environmentId: true,
 	serverId: true,
+	deploymentEngine: true,
+	kubernetesId: true,
+	registryId: true,
 });
 
 export const apiFindOneApplication = z.object({

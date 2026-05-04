@@ -10,6 +10,7 @@ import {
 	getBuildCommand,
 	mechanizeDockerContainer,
 } from "@dokploy/server/utils/builders";
+import { orchestrateKubernetesDeploy } from "@dokploy/server/utils/kubernetes/orchestrate";
 import { sendBuildErrorNotifications } from "@dokploy/server/utils/notifications/build-error";
 import { sendBuildSuccessNotifications } from "@dokploy/server/utils/notifications/build-success";
 import {
@@ -83,7 +84,10 @@ export const createApplication = async (
 			});
 		}
 
-		if (process.env.NODE_ENV === "development") {
+		if (
+			process.env.NODE_ENV === "development" &&
+			newApplication.deploymentEngine !== "kubernetes"
+		) {
 			createTraefikConfig(newApplication.appName);
 		}
 
@@ -115,6 +119,7 @@ export const findApplicationById = async (applicationId: string) => {
 			previewDeployments: true,
 			buildRegistry: true,
 			rollbackRegistry: true,
+			kubernetesCluster: true,
 		},
 	});
 	if (!application) {
@@ -221,7 +226,11 @@ export const deployApplication = async ({
 			await execAsync(commandWithLog);
 		}
 
-		await mechanizeDockerContainer(application);
+		if (application.deploymentEngine === "kubernetes") {
+			await orchestrateKubernetesDeploy({ application });
+		} else {
+			await mechanizeDockerContainer(application);
+		}
 		await updateDeploymentStatus(deployment.deploymentId, "done");
 		await updateApplicationStatus(applicationId, "done");
 
@@ -312,7 +321,11 @@ export const rebuildApplication = async ({
 		} else {
 			await execAsync(commandWithLog);
 		}
-		await mechanizeDockerContainer(application);
+		if (application.deploymentEngine === "kubernetes") {
+			await orchestrateKubernetesDeploy({ application });
+		} else {
+			await mechanizeDockerContainer(application);
+		}
 		await updateDeploymentStatus(deployment.deploymentId, "done");
 		await updateApplicationStatus(applicationId, "done");
 

@@ -45,21 +45,37 @@ import { slugify } from "@/lib/slug";
 import { api } from "@/utils/api";
 import { APP_NAME_MESSAGE, APP_NAME_REGEX } from "@/utils/schema";
 
-const AddTemplateSchema = z.object({
-	name: z.string().min(1, {
-		message: "Name is required",
-	}),
-	appName: z
-		.string()
-		.min(1, {
-			message: "App name is required",
-		})
-		.regex(APP_NAME_REGEX, {
-			message: APP_NAME_MESSAGE,
-		}),
-	description: z.string().optional(),
-	serverId: z.string().optional(),
-});
+const AddTemplateSchema = z
+	.object({
+		name: z.string().min(1, { message: "Name is required" }),
+		appName: z
+			.string()
+			.min(1, { message: "App name is required" })
+			.regex(APP_NAME_REGEX, { message: APP_NAME_MESSAGE }),
+		description: z.string().optional(),
+		serverId: z.string().optional(),
+		deploymentEngine: z.enum(["docker", "kubernetes"]),
+		kubernetesId: z.string().optional(),
+		registryId: z.string().optional(),
+	})
+	.superRefine((val, ctx) => {
+		if (val.deploymentEngine === "kubernetes") {
+			if (!val.kubernetesId) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["kubernetesId"],
+					message: "Select a Kubernetes cluster",
+				});
+			}
+			if (!val.registryId) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: ["registryId"],
+					message: "A registry is required for Kubernetes deployments",
+				});
+			}
+		}
+	});
 
 type AddTemplate = z.infer<typeof AddTemplateSchema>;
 
@@ -74,8 +90,12 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 	const [visible, setVisible] = useState(false);
 	const slug = slugify(projectName);
 	const { data: servers } = api.server.withSSHKey.useQuery();
+	const { data: kubernetesClusters } = api.kubernetes.all.useQuery();
+	const { data: registries } = api.registry.all.useQuery();
 
 	const hasServers = servers && servers.length > 0;
+	const hasKubernetesClusters =
+		kubernetesClusters && kubernetesClusters.length > 0;
 	// Show dropdown logic based on cloud environment
 	// Cloud: show only if there are remote servers (no Dokploy option)
 	// Self-hosted: show only if there are remote servers (Dokploy is default, hide if no remote servers)
@@ -89,17 +109,28 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 			name: "",
 			appName: `${slug}-`,
 			description: "",
+			deploymentEngine: "docker",
 		},
 		resolver: zodResolver(AddTemplateSchema),
 	});
+
+	const deploymentEngine = form.watch("deploymentEngine");
 
 	const onSubmit = async (data: AddTemplate) => {
 		await mutateAsync({
 			name: data.name,
 			appName: data.appName,
 			description: data.description,
-			serverId: data.serverId === "dokploy" ? undefined : data.serverId,
+			serverId:
+				data.deploymentEngine === "kubernetes" || data.serverId === "dokploy"
+					? undefined
+					: data.serverId,
 			environmentId,
+			deploymentEngine: data.deploymentEngine,
+			kubernetesId:
+				data.deploymentEngine === "kubernetes" ? data.kubernetesId : undefined,
+			registryId:
+				data.deploymentEngine === "kubernetes" ? data.registryId : undefined,
 		})
 			.then(async () => {
 				toast.success("Service Created");
@@ -161,7 +192,92 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 								</FormItem>
 							)}
 						/>
-						{shouldShowServerDropdown && (
+						<FormField
+							control={form.control}
+							name="deploymentEngine"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel>Engine</FormLabel>
+									<Select
+										onValueChange={(v) => field.onChange(v)}
+										value={field.value}
+									>
+										<SelectTrigger>
+											<SelectValue placeholder="Select engine" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="docker">Docker / Swarm</SelectItem>
+											<SelectItem
+												value="kubernetes"
+												disabled={!hasKubernetesClusters}
+											>
+												Kubernetes
+												{!hasKubernetesClusters && " (no clusters registered)"}
+											</SelectItem>
+										</SelectContent>
+									</Select>
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+						{deploymentEngine === "kubernetes" && (
+							<>
+								<FormField
+									control={form.control}
+									name="kubernetesId"
+									render={({ field }) => (
+										<FormItem>
+											<FormLabel>Kubernetes Cluster</FormLabel>
+											<Select
+												onValueChange={field.onChange}
+												value={field.value}
+											>
+												<SelectTrigger>
+													<SelectValue placeholder="Select a cluster" />
+												</SelectTrigger>
+												<SelectContent>
+													{kubernetesClusters?.map((c) => (
+														<SelectItem
+															key={c.kubernetesId}
+															value={c.kubernetesId}
+														>
+															{c.name}
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+											<FormMessage />
+										</FormItem>
+									)}
+								/>
+								<FormField
+									control={form.control}
+									name="registryId"
+									render={({ field }) => (
+										<FormItem>
+											<FormLabel>Image Registry</FormLabel>
+											<Select
+												onValueChange={field.onChange}
+												value={field.value}
+											>
+												<SelectTrigger>
+													<SelectValue placeholder="Select a registry" />
+												</SelectTrigger>
+												<SelectContent>
+													{registries?.map((r) => (
+														<SelectItem key={r.registryId} value={r.registryId}>
+															{r.registryName} ({r.registryUrl})
+														</SelectItem>
+													))}
+												</SelectContent>
+											</Select>
+											<FormMessage />
+										</FormItem>
+									)}
+								/>
+							</>
+						)}
+						{deploymentEngine === "docker" && shouldShowServerDropdown && (
 							<FormField
 								control={form.control}
 								name="serverId"
