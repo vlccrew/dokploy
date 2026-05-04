@@ -5,8 +5,13 @@ import * as bcrypt from "bcrypt";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
-import { admin, organization, twoFactor } from "better-auth/plugins";
-import { and, desc, eq } from "drizzle-orm";
+import {
+	admin,
+	genericOAuth,
+	organization,
+	twoFactor,
+} from "better-auth/plugins";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { BETTER_AUTH_SECRET, IS_CLOUD } from "../constants";
 import { db } from "../db";
 import * as schema from "../db/schema";
@@ -27,6 +32,65 @@ import {
 } from "../verification/send-verification-email";
 import { getPublicIpWithFallback } from "../wss/utils";
 import { ac, adminRole, memberRole, ownerRole } from "./access-control";
+
+/**
+ * Self-hosted custom OIDC provider, configured via env vars.
+ *
+ *   DOKPLOY_OIDC_PROVIDER_ID       e.g. "okta", "auth0", "keycloak"
+ *   DOKPLOY_OIDC_PROVIDER_NAME     display name for the sign-in button (defaults to provider ID)
+ *   DOKPLOY_OIDC_DISCOVERY_URL     OIDC discovery URL (.well-known/openid-configuration)
+ *   DOKPLOY_OIDC_CLIENT_ID
+ *   DOKPLOY_OIDC_CLIENT_SECRET
+ *   DOKPLOY_OIDC_SCOPES            space- or comma-separated, defaults to "openid email profile"
+ *   DOKPLOY_OIDC_ALLOW_SIGNUP      "true" to allow on-demand user creation, defaults to false
+ *   DOKPLOY_OIDC_PKCE              "false" to disable PKCE, defaults to enabled
+ */
+export interface OidcRuntimeConfig {
+	providerId: string;
+	providerName: string;
+	discoveryUrl: string;
+	clientId: string;
+	clientSecret: string;
+	scopes: string[];
+	allowSignUp: boolean;
+	pkce: boolean;
+}
+
+const oidcConfig: OidcRuntimeConfig | null = (() => {
+	const providerId = process.env.DOKPLOY_OIDC_PROVIDER_ID?.trim();
+	const discoveryUrl = process.env.DOKPLOY_OIDC_DISCOVERY_URL?.trim();
+	const clientId = process.env.DOKPLOY_OIDC_CLIENT_ID?.trim();
+	const clientSecret = process.env.DOKPLOY_OIDC_CLIENT_SECRET;
+	if (!providerId || !discoveryUrl || !clientId || !clientSecret) {
+		return null;
+	}
+	const scopes = (process.env.DOKPLOY_OIDC_SCOPES || "openid email profile")
+		.split(/[\s,]+/)
+		.map((s) => s.trim())
+		.filter(Boolean);
+	return {
+		providerId,
+		providerName: process.env.DOKPLOY_OIDC_PROVIDER_NAME?.trim() || providerId,
+		discoveryUrl,
+		clientId,
+		clientSecret,
+		scopes,
+		allowSignUp: process.env.DOKPLOY_OIDC_ALLOW_SIGNUP === "true",
+		pkce: process.env.DOKPLOY_OIDC_PKCE !== "false",
+	};
+})();
+
+export const getOidcPublicConfig = () =>
+	oidcConfig
+		? {
+				enabled: true as const,
+				providerId: oidcConfig.providerId,
+				providerName: oidcConfig.providerName,
+			}
+		: { enabled: false as const };
+
+const isOAuth2Path = (path: string | undefined) =>
+	!!path && (path.startsWith("/oauth2/") || path === "/sign-in/oauth2");
 
 const { handler, api } = betterAuth({
 	database: drizzleAdapter(db, {
@@ -59,7 +123,9 @@ const { handler, api } = betterAuth({
 			enabled: true,
 			async trustedProviders() {
 				const fromDb = await getTrustedProviders();
-				return ["github", "google", ...fromDb];
+				const builtins = ["github", "google"];
+				if (oidcConfig) builtins.push(oidcConfig.providerId);
+				return [...builtins, ...fromDb];
 			},
 			allowDifferentEmails: true,
 		},
@@ -178,7 +244,8 @@ const { handler, api } = betterAuth({
 							}
 						} else {
 							const isSSORequest = context?.path.includes("/sso");
-							if (isSSORequest) {
+							const isOIDCRequest = isOAuth2Path(context?.path);
+							if (isSSORequest || isOIDCRequest) {
 								return;
 							}
 							const isAdminPresent = await db.query.member.findFirst({
@@ -194,6 +261,7 @@ const { handler, api } = betterAuth({
 				},
 				after: async (user, context) => {
 					const isSSORequest = context?.path.includes("/sso");
+					const isOIDCRequest = isOAuth2Path(context?.path);
 					const isAdminPresent = await db.query.member.findFirst({
 						where: eq(schema.member.role, "owner"),
 					});
@@ -268,6 +336,24 @@ const { handler, api } = betterAuth({
 						await db.insert(schema.member).values({
 							userId: user.id,
 							organizationId: provider?.organizationId || "",
+							role: "member",
+							createdAt: new Date(),
+							isDefault: true,
+						});
+					} else if (isOIDCRequest) {
+						// New user signed in via custom OIDC and an admin already exists.
+						// Add them to the oldest organization so they have somewhere to land.
+						const firstOrg = await db.query.organization.findFirst({
+							orderBy: [asc(schema.organization.createdAt)],
+						});
+						if (!firstOrg) {
+							throw new APIError("BAD_REQUEST", {
+								message: "No organization available to join",
+							});
+						}
+						await db.insert(schema.member).values({
+							userId: user.id,
+							organizationId: firstOrg.id,
 							role: "member",
 							createdAt: new Date(),
 							isDefault: true,
@@ -410,6 +496,23 @@ const { handler, api } = betterAuth({
 				maximumRolesPerOrganization: 10,
 			},
 		}),
+		...(oidcConfig
+			? [
+					genericOAuth({
+						config: [
+							{
+								providerId: oidcConfig.providerId,
+								discoveryUrl: oidcConfig.discoveryUrl,
+								clientId: oidcConfig.clientId,
+								clientSecret: oidcConfig.clientSecret,
+								scopes: oidcConfig.scopes,
+								pkce: oidcConfig.pkce,
+								disableSignUp: !oidcConfig.allowSignUp,
+							},
+						],
+					}),
+				]
+			: []),
 		...(IS_CLOUD
 			? [
 					admin({
