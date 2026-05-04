@@ -104,9 +104,10 @@ const { handler, api } = betterAuth({
 		"/organization/delete",
 	],
 	secret: BETTER_AUTH_SECRET,
-	...(!IS_CLOUD
-		? {
-				advanced: {
+	advanced: {
+		trustedProxyHeaders: true,
+		...(!IS_CLOUD
+			? {
 					useSecureCookies: false,
 					defaultCookieAttributes: {
 						sameSite: "lax",
@@ -114,9 +115,9 @@ const { handler, api } = betterAuth({
 						httpOnly: true,
 						path: "/",
 					},
-				},
-			}
-		: {}),
+				}
+			: {}),
+	},
 
 	account: {
 		accountLinking: {
