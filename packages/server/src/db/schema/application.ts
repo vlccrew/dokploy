@@ -70,6 +70,11 @@ export const buildType = pgEnum("buildType", [
 	"railpack",
 ]);
 
+export const deploymentEngine = pgEnum("deploymentEngine", [
+	"docker",
+	"kubernetes",
+]);
+
 export const applications = pgTable("application", {
 	applicationId: text("applicationId")
 		.notNull()
@@ -227,6 +232,9 @@ export const applications = pgTable("application", {
 			onDelete: "set null",
 		},
 	),
+	deploymentEngine: deploymentEngine("deploymentEngine")
+		.notNull()
+		.default("docker"),
 });
 
 export const applicationsRelations = relations(
@@ -378,6 +386,7 @@ const createSchema = createInsertSchema(applications, {
 		.max(2 * 1024 * 1024, "Icon must be less than 2MB")
 		.nullable()
 		.optional(),
+	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
 });
 
 export const apiCreateApplication = createSchema.pick({
@@ -386,6 +395,8 @@ export const apiCreateApplication = createSchema.pick({
 	description: true,
 	environmentId: true,
 	serverId: true,
+	deploymentEngine: true,
+	registryId: true,
 });
 
 export const apiFindOneApplication = z.object({

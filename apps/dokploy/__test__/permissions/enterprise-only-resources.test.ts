@@ -27,6 +27,7 @@ const ENTERPRISE_RESOURCES = [
 	"projectEnvVars",
 	"environmentEnvVars",
 	"server",
+	"kubernetes",
 	"registry",
 	"certificate",
 	"backup",

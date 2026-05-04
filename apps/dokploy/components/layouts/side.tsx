@@ -305,6 +305,13 @@ const MENU: Menu = {
 		},
 		{
 			isSingle: true,
+			title: "Kubernetes",
+			url: "/dashboard/settings/kubernetes",
+			icon: Boxes,
+			isEnabled: ({ permissions }) => !!permissions?.kubernetes?.read,
+		},
+		{
+			isSingle: true,
 			title: "Users",
 			icon: Users,
 			url: "/dashboard/settings/users",

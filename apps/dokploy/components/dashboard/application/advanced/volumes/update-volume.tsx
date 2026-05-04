@@ -54,7 +54,7 @@ const mySchema = z.discriminatedUnion("type", [
 		.object({
 			type: z.literal("file"),
 			content: z.string().optional(),
-			filePath: z.string().min(1, "File path required"),
+			filePath: z.string().optional(),
 		})
 		.merge(mountSchema),
 ]);
@@ -162,11 +162,15 @@ export const UpdateVolume = ({
 					toast.error("Error updating the Volume mount");
 				});
 		} else if (data.type === "file") {
+			const filePath =
+				data.filePath?.trim() ||
+				(data.mountPath || "").split("/").filter(Boolean).pop() ||
+				"file";
 			await mutateAsync({
 				content: data.content,
 				mountPath: data.mountPath,
 				type: data.type,
-				filePath: data.filePath,
+				filePath,
 				mountId,
 			})
 				.then(() => {

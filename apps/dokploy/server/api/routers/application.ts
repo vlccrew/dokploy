@@ -1,4 +1,5 @@
 import {
+	cleanupKubernetesApplication,
 	clearOldDeployments,
 	createApplication,
 	deleteAllMiddlewares,
@@ -261,6 +262,18 @@ export const applicationRouter = createTRPCRouter({
 					await removeTraefikConfig(application.appName, application.serverId),
 				async () =>
 					await removeService(application?.appName, application.serverId),
+				async () => {
+					if (application.deploymentEngine !== "kubernetes") return;
+					const ns = application.environment.project.kubernetesNamespace;
+					const kid = application.environment.project.kubernetesId;
+					if (!ns || !kid) return;
+					await cleanupKubernetesApplication({
+						applicationId: application.applicationId,
+						appName: application.appName,
+						namespace: ns,
+						kubernetesId: kid,
+					});
+				},
 			];
 
 			for (const operation of cleanupOperations) {

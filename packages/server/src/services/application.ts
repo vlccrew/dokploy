@@ -1,3 +1,4 @@
+import { appendFile } from "node:fs/promises";
 import { docker } from "@dokploy/server/constants";
 import { db } from "@dokploy/server/db";
 import {
@@ -10,6 +11,7 @@ import {
 	getBuildCommand,
 	mechanizeDockerContainer,
 } from "@dokploy/server/utils/builders";
+import { orchestrateKubernetesDeploy } from "@dokploy/server/utils/kubernetes/orchestrate";
 import { sendBuildErrorNotifications } from "@dokploy/server/utils/notifications/build-error";
 import { sendBuildSuccessNotifications } from "@dokploy/server/utils/notifications/build-success";
 import {
@@ -51,6 +53,16 @@ import {
 	updatePreviewDeployment,
 } from "./preview-deployment";
 import { validUniqueServerAppName } from "./project";
+
+const writeBanner = async (logPath: string, title: string) => {
+	const bar = "═".repeat(60);
+	try {
+		await appendFile(logPath, `\n${bar}\n  ${title}\n${bar}\n`);
+	} catch {
+		// best-effort
+	}
+};
+
 export type Application = typeof applications.$inferSelect;
 
 export const createApplication = async (
@@ -83,7 +95,10 @@ export const createApplication = async (
 			});
 		}
 
-		if (process.env.NODE_ENV === "development") {
+		if (
+			process.env.NODE_ENV === "development" &&
+			newApplication.deploymentEngine !== "kubernetes"
+		) {
 			createTraefikConfig(newApplication.appName);
 		}
 
@@ -189,39 +204,57 @@ export const deployApplication = async ({
 	});
 
 	try {
-		let command = "set -e;";
-		if (application.sourceType === "github") {
-			command += await cloneGithubRepository(applicationEntity);
-		} else if (application.sourceType === "gitlab") {
-			command += await cloneGitlabRepository(applicationEntity);
-		} else if (application.sourceType === "gitea") {
-			command += await cloneGiteaRepository(applicationEntity);
-		} else if (application.sourceType === "bitbucket") {
-			command += await cloneBitbucketRepository(applicationEntity);
-		} else if (application.sourceType === "git") {
-			command += await cloneGitRepository(applicationEntity);
-		} else if (application.sourceType === "docker") {
-			command += await buildRemoteDocker(application);
+		// For Kubernetes + sourceType=docker, skip the entire local build/push
+		// pipeline — the cluster pulls the public image directly via the
+		// Deployment manifest. No clone, no local pull, no registry round-trip.
+		const skipBuildForK8sDocker =
+			application.deploymentEngine === "kubernetes" &&
+			application.sourceType === "docker";
+
+		if (!skipBuildForK8sDocker) {
+			await writeBanner(deployment.logPath, "BUILD");
+			let command = "set -e;";
+			if (application.sourceType === "github") {
+				command += await cloneGithubRepository(applicationEntity);
+			} else if (application.sourceType === "gitlab") {
+				command += await cloneGitlabRepository(applicationEntity);
+			} else if (application.sourceType === "gitea") {
+				command += await cloneGiteaRepository(applicationEntity);
+			} else if (application.sourceType === "bitbucket") {
+				command += await cloneBitbucketRepository(applicationEntity);
+			} else if (application.sourceType === "git") {
+				command += await cloneGitRepository(applicationEntity);
+			} else if (application.sourceType === "docker") {
+				command += await buildRemoteDocker(application);
+			}
+
+			if (application.sourceType !== "docker") {
+				command += await generateApplyPatchesCommand({
+					id: application.applicationId,
+					type: "application",
+					serverId,
+				});
+			}
+
+			command += await getBuildCommand(application);
+
+			const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
+			if (serverId) {
+				await execAsyncRemote(serverId, commandWithLog);
+			} else {
+				await execAsync(commandWithLog);
+			}
 		}
 
-		if (application.sourceType !== "docker") {
-			command += await generateApplyPatchesCommand({
-				id: application.applicationId,
-				type: "application",
-				serverId,
+		if (application.deploymentEngine === "kubernetes") {
+			await writeBanner(deployment.logPath, "KUBE APPLY");
+			await orchestrateKubernetesDeploy({
+				application,
+				logPath: deployment.logPath,
 			});
-		}
-
-		command += await getBuildCommand(application);
-
-		const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-		if (serverId) {
-			await execAsyncRemote(serverId, commandWithLog);
 		} else {
-			await execAsync(commandWithLog);
+			await mechanizeDockerContainer(application);
 		}
-
-		await mechanizeDockerContainer(application);
 		await updateDeploymentStatus(deployment.deploymentId, "done");
 		await updateApplicationStatus(applicationId, "done");
 
@@ -303,16 +336,30 @@ export const rebuildApplication = async ({
 	});
 
 	try {
-		let command = "set -e;";
-		// Check case for docker only
-		command += await getBuildCommand(application);
-		const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-		if (serverId) {
-			await execAsyncRemote(serverId, commandWithLog);
-		} else {
-			await execAsync(commandWithLog);
+		const skipBuildForK8sDocker =
+			application.deploymentEngine === "kubernetes" &&
+			application.sourceType === "docker";
+
+		if (!skipBuildForK8sDocker) {
+			await writeBanner(deployment.logPath, "BUILD (rebuild)");
+			let command = "set -e;";
+			command += await getBuildCommand(application);
+			const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
+			if (serverId) {
+				await execAsyncRemote(serverId, commandWithLog);
+			} else {
+				await execAsync(commandWithLog);
+			}
 		}
-		await mechanizeDockerContainer(application);
+		if (application.deploymentEngine === "kubernetes") {
+			await writeBanner(deployment.logPath, "KUBE APPLY");
+			await orchestrateKubernetesDeploy({
+				application,
+				logPath: deployment.logPath,
+			});
+		} else {
+			await mechanizeDockerContainer(application);
+		}
 		await updateDeploymentStatus(deployment.deploymentId, "done");
 		await updateApplicationStatus(applicationId, "done");
 

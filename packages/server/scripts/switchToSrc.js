@@ -27,6 +27,17 @@ pkg.exports = {
 		import: "./src/constants/index.ts",
 		require: "./dist/constants.cjs.js",
 	},
+	// Bare-directory imports that resolve to {dir}/index.ts.
+	// Add a line here whenever a new directory becomes importable as a subpath.
+	"./db/schema": "./src/db/schema/index.ts",
+	"./templates": "./src/templates/index.ts",
+	"./utils/builders": "./src/utils/builders/index.ts",
+	"./utils/restore": "./src/utils/restore/index.ts",
+	// React Email templates are .tsx, not .ts.
+	"./emails/*": "./src/emails/*.tsx",
+	// Catch-all wildcard for deep file imports (e.g. "@dokploy/server/services/foo").
+	// Production (switchToDist) has an equivalent "./*" mapping.
+	"./*": "./src/*.ts",
 };
 
 // Guardar los cambios en package.json

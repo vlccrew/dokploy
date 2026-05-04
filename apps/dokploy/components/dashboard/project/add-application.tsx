@@ -45,21 +45,27 @@ import { slugify } from "@/lib/slug";
 import { api } from "@/utils/api";
 import { APP_NAME_MESSAGE, APP_NAME_REGEX } from "@/utils/schema";
 
-const AddTemplateSchema = z.object({
-	name: z.string().min(1, {
-		message: "Name is required",
-	}),
-	appName: z
-		.string()
-		.min(1, {
-			message: "App name is required",
-		})
-		.regex(APP_NAME_REGEX, {
-			message: APP_NAME_MESSAGE,
-		}),
-	description: z.string().optional(),
-	serverId: z.string().optional(),
-});
+const AddTemplateSchema = z
+	.object({
+		name: z.string().min(1, { message: "Name is required" }),
+		appName: z
+			.string()
+			.min(1, { message: "App name is required" })
+			.regex(APP_NAME_REGEX, { message: APP_NAME_MESSAGE }),
+		description: z.string().optional(),
+		serverId: z.string().optional(),
+		deploymentEngine: z.enum(["docker", "kubernetes"]),
+		registryId: z.string().optional(),
+	})
+	.superRefine((val, ctx) => {
+		if (val.deploymentEngine === "kubernetes" && !val.registryId) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["registryId"],
+				message: "A registry is required for Kubernetes deployments",
+			});
+		}
+	});
 
 type AddTemplate = z.infer<typeof AddTemplateSchema>;
 
@@ -74,6 +80,7 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 	const [visible, setVisible] = useState(false);
 	const slug = slugify(projectName);
 	const { data: servers } = api.server.withSSHKey.useQuery();
+	const { data: registries } = api.registry.all.useQuery();
 
 	const hasServers = servers && servers.length > 0;
 	// Show dropdown logic based on cloud environment
@@ -89,17 +96,26 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 			name: "",
 			appName: `${slug}-`,
 			description: "",
+			deploymentEngine: "docker",
 		},
 		resolver: zodResolver(AddTemplateSchema),
 	});
+
+	const deploymentEngine = form.watch("deploymentEngine");
 
 	const onSubmit = async (data: AddTemplate) => {
 		await mutateAsync({
 			name: data.name,
 			appName: data.appName,
 			description: data.description,
-			serverId: data.serverId === "dokploy" ? undefined : data.serverId,
+			serverId:
+				data.deploymentEngine === "kubernetes" || data.serverId === "dokploy"
+					? undefined
+					: data.serverId,
 			environmentId,
+			deploymentEngine: data.deploymentEngine,
+			registryId:
+				data.deploymentEngine === "kubernetes" ? data.registryId : undefined,
 		})
 			.then(async () => {
 				toast.success("Service Created");
@@ -161,7 +177,53 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 								</FormItem>
 							)}
 						/>
-						{shouldShowServerDropdown && (
+						<FormField
+							control={form.control}
+							name="deploymentEngine"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel>Engine</FormLabel>
+									<Select
+										onValueChange={(v) => field.onChange(v)}
+										value={field.value}
+									>
+										<SelectTrigger>
+											<SelectValue placeholder="Select engine" />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="docker">Docker / Swarm</SelectItem>
+											<SelectItem value="kubernetes">Kubernetes</SelectItem>
+										</SelectContent>
+									</Select>
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+						{deploymentEngine === "kubernetes" && (
+							<FormField
+								control={form.control}
+								name="registryId"
+								render={({ field }) => (
+									<FormItem>
+										<FormLabel>Image Registry</FormLabel>
+										<Select onValueChange={field.onChange} value={field.value}>
+											<SelectTrigger>
+												<SelectValue placeholder="Select a registry" />
+											</SelectTrigger>
+											<SelectContent>
+												{registries?.map((r) => (
+													<SelectItem key={r.registryId} value={r.registryId}>
+														{r.registryName} ({r.registryUrl})
+													</SelectItem>
+												))}
+											</SelectContent>
+										</Select>
+										<FormMessage />
+									</FormItem>
+								)}
+							/>
+						)}
+						{deploymentEngine === "docker" && shouldShowServerDropdown && (
 							<FormField
 								control={form.control}
 								name="serverId"
