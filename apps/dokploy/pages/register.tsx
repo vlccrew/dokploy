@@ -11,6 +11,7 @@ import { z } from "zod";
 import { OnboardingLayout } from "@/components/layouts/onboarding-layout";
 import { SignInWithGithub } from "@/components/proprietary/auth/sign-in-with-github";
 import { SignInWithGoogle } from "@/components/proprietary/auth/sign-in-with-google";
+import { SignInWithOIDC } from "@/components/proprietary/auth/sign-in-with-oidc";
 import { SignupShowcase } from "@/components/proprietary/auth/signup-showcase";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { Logo } from "@/components/shared/logo";
@@ -28,6 +29,7 @@ import { Input } from "@/components/ui/input";
 import { pushToDataLayer } from "@/lib/analytics";
 import { authClient } from "@/lib/auth-client";
 import { appRouter } from "@/server/api/root";
+import { api } from "@/utils/api";
 import { generateServerSideHelper } from "@/utils/create-server-helpers";
 import { useWhitelabelingPublic } from "@/utils/hooks/use-whitelabeling";
 
@@ -84,6 +86,7 @@ interface Props {
 const Register = ({ isCloud }: Props) => {
 	const router = useRouter();
 	const { config: whitelabeling } = useWhitelabelingPublic();
+	const { data: oidcConfig } = api.oidc.publicConfig.useQuery();
 	const [isError, setIsError] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [data, setData] = useState<any>(null);
@@ -190,7 +193,13 @@ const Register = ({ isCloud }: Props) => {
 									<SignInWithGoogle />
 								</div>
 							)}
-							{isCloud && (
+							{oidcConfig?.enabled && (
+								<SignInWithOIDC
+									providerId={oidcConfig.providerId}
+									providerName={oidcConfig.providerName}
+								/>
+							)}
+							{(isCloud || oidcConfig?.enabled) && (
 								<p className="mb-4 text-center text-xs text-muted-foreground">
 									Or register with email
 								</p>
