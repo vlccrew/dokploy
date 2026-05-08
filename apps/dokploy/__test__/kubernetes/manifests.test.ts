@@ -1,5 +1,10 @@
 import type { ApplicationNested, Domain } from "@dokploy/server";
-import { buildDeploymentManifest, buildIngressManifest } from "@dokploy/server";
+import {
+	buildDeploymentManifest,
+	buildIngressManifest,
+	ENV_CHECKSUM_ANNOTATION,
+	FILES_CHECKSUM_ANNOTATION,
+} from "@dokploy/server";
 import { describe, expect, test } from "vitest";
 
 const baseApp: ApplicationNested = {
@@ -198,6 +203,116 @@ describe("buildDeploymentManifest", () => {
 			{ secretRef: { name: "test-app-abc123-env" } },
 		]);
 		expect(container?.env).toBeUndefined();
+	});
+
+	test("env-checksum annotation flips when env content changes", () => {
+		const a = buildDeploymentManifest({
+			application: baseApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+			envFromSecretName: "test-app-abc123-env",
+			env: { FOO: "bar", BAZ: "1" },
+		});
+		const b = buildDeploymentManifest({
+			application: baseApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+			envFromSecretName: "test-app-abc123-env",
+			env: { FOO: "bar", BAZ: "2" },
+		});
+		const sumA =
+			a.deployment.spec?.template.metadata?.annotations?.[
+				ENV_CHECKSUM_ANNOTATION
+			];
+		const sumB =
+			b.deployment.spec?.template.metadata?.annotations?.[
+				ENV_CHECKSUM_ANNOTATION
+			];
+		expect(sumA).toBeTruthy();
+		expect(sumB).toBeTruthy();
+		expect(sumA).not.toBe(sumB);
+	});
+
+	test("env-checksum is stable across key ordering", () => {
+		const a = buildDeploymentManifest({
+			application: baseApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+			env: { FOO: "bar", BAZ: "1" },
+		});
+		const b = buildDeploymentManifest({
+			application: baseApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+			env: { BAZ: "1", FOO: "bar" },
+		});
+		expect(
+			a.deployment.spec?.template.metadata?.annotations?.[
+				ENV_CHECKSUM_ANNOTATION
+			],
+		).toBe(
+			b.deployment.spec?.template.metadata?.annotations?.[
+				ENV_CHECKSUM_ANNOTATION
+			],
+		);
+	});
+
+	test("no checksum annotations when env is empty and no file mounts", () => {
+		const { deployment } = buildDeploymentManifest({
+			application: baseApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+		});
+		expect(deployment.spec?.template.metadata?.annotations).toBeUndefined();
+	});
+
+	test("files-checksum annotation flips when file mount content changes", () => {
+		const makeFileApp = (content: string) =>
+			({
+				...baseApp,
+				mounts: [
+					{
+						mountId: "mount0001",
+						type: "file",
+						hostPath: null,
+						volumeName: null,
+						filePath: null,
+						content,
+						mountPath: "/etc/welcome.conf",
+						serviceType: "application",
+						applicationId: "app-1",
+						composeId: null,
+						libsqlId: null,
+						mariadbId: null,
+						mongoId: null,
+						mysqlId: null,
+						postgresId: null,
+						redisId: null,
+					},
+				],
+			}) as unknown as typeof baseApp;
+
+		const a = buildDeploymentManifest({
+			application: makeFileApp("hello v1"),
+			image: "img:1",
+			namespace: "dokploy-test",
+		});
+		const b = buildDeploymentManifest({
+			application: makeFileApp("hello v2"),
+			image: "img:1",
+			namespace: "dokploy-test",
+		});
+		const sumA =
+			a.deployment.spec?.template.metadata?.annotations?.[
+				FILES_CHECKSUM_ANNOTATION
+			];
+		const sumB =
+			b.deployment.spec?.template.metadata?.annotations?.[
+				FILES_CHECKSUM_ANNOTATION
+			];
+		expect(sumA).toBeTruthy();
+		expect(sumB).toBeTruthy();
+		expect(sumA).not.toBe(sumB);
 	});
 
 	test("maps cpu/memory limits to Kubernetes units", () => {
