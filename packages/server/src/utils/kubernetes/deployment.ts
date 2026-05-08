@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
 	V1ConfigMap,
 	V1Container,
@@ -10,6 +11,37 @@ import type { ApplicationNested } from "../builders";
 import type { KubernetesClient } from "./client";
 import { isHttpError } from "./errors";
 import { IMAGE_PULL_SECRET_NAME } from "./secrets";
+
+export const ENV_CHECKSUM_ANNOTATION = "dokploy.io/env-checksum";
+export const FILES_CHECKSUM_ANNOTATION = "dokploy.io/files-checksum";
+
+// Pods read `envFrom` Secret/ConfigMap values only at start time, so updating
+// the Secret in place leaves running pods with the old env. Putting a hash of
+// the env content on the pod template forces the template to differ when env
+// changes, which triggers a rolling restart.
+const hashEnv = (env: Record<string, string>): string => {
+	const sortedKeys = Object.keys(env).sort();
+	const canonical = sortedKeys.map((k) => [k, env[k]] as const);
+	return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+};
+
+// File mounts ship as ConfigMaps consumed via `subPath`. kubelet does NOT
+// propagate ConfigMap updates into subPath-mounted files, so the same trick
+// the env-checksum uses applies: hash the ConfigMap data onto the pod template
+// so file content changes trigger a rolling restart.
+type FileConfigMap = NonNullable<VolumePiece["configMap"]>;
+const hashFiles = (volumePieces: VolumePiece[]): string | null => {
+	const cms: FileConfigMap[] = volumePieces
+		.map((v) => v.configMap)
+		.filter((cm): cm is FileConfigMap => Boolean(cm));
+	if (cms.length === 0) return null;
+	const sorted = [...cms].sort((a, b) => a.name.localeCompare(b.name));
+	const canonical = sorted.map((cm) => {
+		const sortedKeys = Object.keys(cm.data).sort();
+		return [cm.name, sortedKeys.map((k) => [k, cm.data[k]] as const)] as const;
+	});
+	return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
+};
 
 export const k8sName = (raw: string): string => {
 	const slug = slugify(raw, { lower: true, strict: true });
@@ -141,6 +173,12 @@ export interface DeploymentBuildInput {
 	 * was skipped.
 	 */
 	envFromSecretName?: string | null;
+	/**
+	 * Resolved env-var map. Hashed onto the pod template as the
+	 * `dokploy.io/env-checksum` annotation so secret content changes trigger
+	 * a rolling restart. Pass null/undefined when there are no env vars.
+	 */
+	env?: Record<string, string> | null;
 }
 
 export const buildDeploymentManifest = ({
@@ -149,6 +187,7 @@ export const buildDeploymentManifest = ({
 	namespace,
 	imagePullSecretName = IMAGE_PULL_SECRET_NAME,
 	envFromSecretName = null,
+	env = null,
 }: DeploymentBuildInput) => {
 	const appName = k8sName(application.appName);
 	const labels = {
@@ -220,6 +259,14 @@ export const buildDeploymentManifest = ({
 		...(volumes.length > 0 && { volumes: volumes as V1PodSpec["volumes"] }),
 	};
 
+	const envChecksum = env && Object.keys(env).length > 0 ? hashEnv(env) : null;
+	const filesChecksum = hashFiles(volumePieces);
+	const annotations = {
+		...(envChecksum && { [ENV_CHECKSUM_ANNOTATION]: envChecksum }),
+		...(filesChecksum && { [FILES_CHECKSUM_ANNOTATION]: filesChecksum }),
+	};
+	const hasAnnotations = Object.keys(annotations).length > 0;
+
 	const deployment: V1Deployment = {
 		apiVersion: "apps/v1",
 		kind: "Deployment",
@@ -228,7 +275,10 @@ export const buildDeploymentManifest = ({
 			replicas: application.replicas ?? 1,
 			selector: { matchLabels: { "app.kubernetes.io/name": appName } },
 			template: {
-				metadata: { labels },
+				metadata: {
+					labels,
+					...(hasAnnotations && { annotations }),
+				},
 				spec: podSpec,
 			},
 		},
@@ -263,6 +313,7 @@ export const applyDeployment = async (
 	namespace: string,
 	imagePullSecretName: string | null = IMAGE_PULL_SECRET_NAME,
 	envFromSecretName: string | null = null,
+	env: Record<string, string> | null = null,
 ): Promise<{ appName: string }> => {
 	const { deployment, configMaps, pvcs, appName } = buildDeploymentManifest({
 		application,
@@ -270,6 +321,7 @@ export const applyDeployment = async (
 		namespace,
 		imagePullSecretName,
 		envFromSecretName,
+		env,
 	});
 
 	for (const pvc of pvcs) {

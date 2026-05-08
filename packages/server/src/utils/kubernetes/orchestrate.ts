@@ -141,6 +141,7 @@ export const orchestrateKubernetesDeploy = async ({
 		namespace,
 		imagePullSecretName,
 		envSecretName,
+		envObj,
 	);
 	await log(
 		`✅ Deployment '${appName}' applied (replicas: ${application.replicas})`,
