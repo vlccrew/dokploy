@@ -4,7 +4,7 @@ import { certificates as certificatesTable } from "../../db/schema";
 import type { Domain } from "../../services/domain";
 import type { ApplicationNested } from "../builders";
 import type { KubernetesClient } from "./client";
-import { k8sName } from "./deployment";
+import { k8sLabelValue, k8sName } from "./deployment";
 import { isHttpError } from "./errors";
 import { applyTlsSecret } from "./secrets";
 
@@ -100,8 +100,8 @@ export const buildIngressManifest = ({
 			labels: {
 				"app.kubernetes.io/managed-by": "dokploy",
 				"app.kubernetes.io/name": appName,
-				"dokploy.io/application-id": application.applicationId,
-				"dokploy.io/domain-id": domain.domainId,
+				"dokploy.io/application-id": k8sLabelValue(application.applicationId),
+				"dokploy.io/domain-id": k8sLabelValue(domain.domainId),
 			},
 			annotations,
 		},
