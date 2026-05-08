@@ -3,6 +3,7 @@ import slugify from "slugify";
 import { db } from "../../db";
 import { projects } from "../../db/schema";
 import type { KubernetesClient } from "./client";
+import { k8sLabelValue } from "./deployment";
 import { isHttpError } from "./errors";
 
 export const computeNamespaceName = (
@@ -48,7 +49,7 @@ export const ensureNamespace = async (
 						name: namespace,
 						labels: {
 							"app.kubernetes.io/managed-by": "dokploy",
-							"dokploy.io/project-id": project.projectId,
+							"dokploy.io/project-id": k8sLabelValue(project.projectId),
 						},
 					},
 				},

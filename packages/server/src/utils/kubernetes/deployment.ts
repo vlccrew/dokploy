@@ -16,6 +16,13 @@ export const k8sName = (raw: string): string => {
 	return slug.replace(/[^a-z0-9-]/g, "-").slice(0, 63) || "app";
 };
 
+// K8s label values: max 63 chars, must start and end with [A-Za-z0-9].
+// nanoid IDs can start/end with `-` or `_`, which fails validation, so trim those.
+export const k8sLabelValue = (raw: string): string => {
+	const trimmed = raw.replace(/^[^A-Za-z0-9]+/, "").slice(0, 63);
+	return trimmed.replace(/[^A-Za-z0-9]+$/, "");
+};
+
 const parseMemory = (value?: string | null): string | undefined => {
 	if (!value) return undefined;
 	const bytes = Number.parseInt(value);
@@ -147,7 +154,7 @@ export const buildDeploymentManifest = ({
 	const labels = {
 		"app.kubernetes.io/managed-by": "dokploy",
 		"app.kubernetes.io/name": appName,
-		"dokploy.io/application-id": application.applicationId,
+		"dokploy.io/application-id": k8sLabelValue(application.applicationId),
 	};
 
 	const volumePieces = buildVolumes(application, appName);
