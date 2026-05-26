@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import superjson from "superjson";
 import { ShowEnvironment } from "@/components/dashboard/application/environment/show-environment";
 import { ShowDockerLogs } from "@/components/dashboard/application/logs/show";
+import { ShowKubernetesPodLogs } from "@/components/dashboard/application/logs/show-kubernetes";
 import { DeleteService } from "@/components/dashboard/compose/delete-service";
 import { ShowBackups } from "@/components/dashboard/database/backups/show-backups";
 import { ContainerFreeMonitoring } from "@/components/dashboard/monitoring/free/container/show-free-container-monitoring";
@@ -115,27 +116,31 @@ const MySql = (
 								</div>
 								<div className="flex max-w-[45%] min-w-0 flex-col h-fit gap-2 md:max-w-none md:w-fit">
 									<div className="flex max-w-full min-w-0 flex-row h-fit gap-2">
-										<Badge
-											className="min-w-0 max-w-full cursor-pointer overflow-hidden"
-											onClick={() => {
-												const ip = data?.server?.ipAddress || serverIp;
-												if (ip) {
-													copy(ip);
-													toast.success("IP Address Copied!");
-												}
-											}}
-											variant={
-												!data?.serverId
-													? "default"
-													: data?.server?.serverStatus === "active"
+										{data?.deploymentEngine === "kubernetes" ? (
+											<Badge variant="default">Kubernetes</Badge>
+										) : (
+											<Badge
+												className="min-w-0 max-w-full cursor-pointer overflow-hidden"
+												onClick={() => {
+													const ip = data?.server?.ipAddress || serverIp;
+													if (ip) {
+														copy(ip);
+														toast.success("IP Address Copied!");
+													}
+												}}
+												variant={
+													!data?.serverId
 														? "default"
-														: "destructive"
-											}
-										>
-											<span className="truncate">
-												{data?.server?.name || "Dokploy Server"}
-											</span>
-										</Badge>
+														: data?.server?.serverStatus === "active"
+															? "default"
+															: "destructive"
+												}
+											>
+												<span className="truncate">
+													{data?.server?.name || "Dokploy Server"}
+												</span>
+											</Badge>
+										)}
 										{data?.server?.serverStatus === "inactive" && (
 											<TooltipProvider delayDuration={0}>
 												<Tooltip>
@@ -286,11 +291,18 @@ const MySql = (
 										{permissions?.logs.read && (
 											<TabsContent value="logs">
 												<div className="flex flex-col gap-4  pt-2.5">
-													<ShowDockerLogs
-														serverId={data?.serverId || ""}
-														appName={data?.appName || ""}
-														serviceId={data?.mysqlId}
-													/>
+													{data?.deploymentEngine === "kubernetes" ? (
+														<ShowKubernetesPodLogs
+															serviceType="mysql"
+															serviceId={mysqlId}
+														/>
+													) : (
+														<ShowDockerLogs
+															serverId={data?.serverId || ""}
+															appName={data?.appName || ""}
+															serviceId={data?.mysqlId}
+														/>
+													)}
 												</div>
 											</TabsContent>
 										)}

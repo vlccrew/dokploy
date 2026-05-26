@@ -1,5 +1,6 @@
 import {
 	checkPortInUse,
+	cleanupKubernetesDatabase,
 	createMount,
 	createRedis,
 	deployRedis,
@@ -16,6 +17,7 @@ import {
 	rebuildDatabase,
 	removeRedisById,
 	removeService,
+	scaleKubernetesDatabase,
 	startService,
 	startServiceRemote,
 	stopService,
@@ -140,7 +142,22 @@ export const redisRouter = createTRPCRouter({
 			});
 			const redis = await findRedisById(input.redisId);
 
-			if (redis.serverId) {
+			if (redis.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } = redis.environment.project;
+				if (!kubernetesId || !kubernetesNamespace) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message:
+							"This database is set to Kubernetes but the project has no cluster/namespace bound. Deploy it once first.",
+					});
+				}
+				await scaleKubernetesDatabase({
+					kubernetesId,
+					namespace: kubernetesNamespace,
+					appName: redis.appName,
+					replicas: 1,
+				});
+			} else if (redis.serverId) {
 				await startServiceRemote(redis.serverId, redis.appName);
 			} else {
 				await startService(redis.appName);
@@ -164,19 +181,40 @@ export const redisRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const redis = await findRedisById(input.redisId);
-			if (redis.serverId) {
-				await stopServiceRemote(redis.serverId, redis.appName);
+			if (redis.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } = redis.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: redis.appName,
+						replicas: 0,
+					});
+					await updateRedisById(input.redisId, {
+						applicationStatus: "idle",
+					});
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: redis.appName,
+						replicas: 1,
+					});
+				}
 			} else {
-				await stopService(redis.appName);
-			}
-			await updateRedisById(input.redisId, {
-				applicationStatus: "idle",
-			});
+				if (redis.serverId) {
+					await stopServiceRemote(redis.serverId, redis.appName);
+				} else {
+					await stopService(redis.appName);
+				}
+				await updateRedisById(input.redisId, {
+					applicationStatus: "idle",
+				});
 
-			if (redis.serverId) {
-				await startServiceRemote(redis.serverId, redis.appName);
-			} else {
-				await startService(redis.appName);
+				if (redis.serverId) {
+					await startServiceRemote(redis.serverId, redis.appName);
+				} else {
+					await startService(redis.appName);
+				}
 			}
 			await updateRedisById(input.redisId, {
 				applicationStatus: "done",
@@ -197,7 +235,17 @@ export const redisRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const redis = await findRedisById(input.redisId);
-			if (redis.serverId) {
+			if (redis.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } = redis.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: redis.appName,
+						replicas: 0,
+					});
+				}
+			} else if (redis.serverId) {
 				await stopServiceRemote(redis.serverId, redis.appName);
 			} else {
 				await stopService(redis.appName);
@@ -339,8 +387,24 @@ export const redisRouter = createTRPCRouter({
 				resourceId: redis.redisId,
 				resourceName: redis.appName,
 			});
+			const isKubernetes = redis.deploymentEngine === "kubernetes";
+			const k8sId = redis.environment.project.kubernetesId;
+			const k8sNs = redis.environment.project.kubernetesNamespace;
+
 			const cleanupOperations = [
-				async () => await removeService(redis?.appName, redis.serverId),
+				async () => {
+					if (isKubernetes && k8sId && k8sNs) {
+						await cleanupKubernetesDatabase({
+							kind: "redis",
+							databaseId: redis.redisId,
+							appName: redis.appName,
+							namespace: k8sNs,
+							kubernetesId: k8sId,
+						});
+					} else {
+						await removeService(redis?.appName, redis.serverId);
+					}
+				},
 				async () => await removeRedisById(input.redisId),
 			];
 

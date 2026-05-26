@@ -16,6 +16,7 @@ import { mounts } from "./mount";
 import { server } from "./server";
 import {
 	applicationStatus,
+	deploymentEngine,
 	type EndpointSpecSwarm,
 	EndpointSpecSwarmSchema,
 	type HealthCheckSwarm,
@@ -96,6 +97,9 @@ export const mongo = pgTable("mongo", {
 	detachDokployNetwork: boolean("detachDokployNetwork")
 		.notNull()
 		.default(false),
+	deploymentEngine: deploymentEngine("deploymentEngine")
+		.notNull()
+		.default("docker"),
 });
 
 export const mongoRelations = relations(mongo, ({ one, many }) => ({
@@ -152,6 +156,7 @@ const createSchema = createInsertSchema(mongo, {
 	ulimitsSwarm: UlimitsSwarmSchema.nullable(),
 	networkIds: z.array(z.string()).optional(),
 	detachDokployNetwork: z.boolean().optional(),
+	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
 });
 
 export const apiCreateMongo = createSchema.pick({
@@ -164,6 +169,7 @@ export const apiCreateMongo = createSchema.pick({
 	databasePassword: true,
 	serverId: true,
 	replicaSets: true,
+	deploymentEngine: true,
 });
 
 export const apiFindOneMongo = z.object({

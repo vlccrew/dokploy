@@ -10,6 +10,7 @@ import {
 	pullImage,
 	waitForSwarmServiceConvergence,
 } from "@dokploy/server/utils/docker/utils";
+import { orchestrateKubernetesDatabaseDeploy } from "@dokploy/server/utils/kubernetes/database";
 import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { eq } from "drizzle-orm";
@@ -111,18 +112,41 @@ export const deployRedis = async (
 		});
 
 		onData?.("Starting redis deployment...");
-		if (redis.serverId) {
-			await execAsyncRemote(
-				redis.serverId,
-				`docker pull ${quote([redis.dockerImage])}`,
-				onData,
-			);
+		if (redis.deploymentEngine === "kubernetes") {
+			await orchestrateKubernetesDatabaseDeploy({
+				input: {
+					kind: "redis",
+					databaseId: redis.redisId,
+					appName: redis.appName,
+					image: redis.dockerImage,
+					env: redis.env,
+					command: redis.command,
+					args: redis.args,
+					containerPort: 6379,
+					externalPort: redis.externalPort,
+					dataDir: "/data",
+					memoryLimit: redis.memoryLimit,
+					memoryReservation: redis.memoryReservation,
+					cpuLimit: redis.cpuLimit,
+					cpuReservation: redis.cpuReservation,
+					mounts: redis.mounts,
+					environment: redis.environment,
+				},
+			});
 		} else {
-			await pullImage(redis.dockerImage, onData);
-		}
+			if (redis.serverId) {
+				await execAsyncRemote(
+					redis.serverId,
+					`docker pull ${quote([redis.dockerImage])}`,
+					onData,
+				);
+			} else {
+				await pullImage(redis.dockerImage, onData);
+			}
 
-		await buildRedis(redis);
-		await waitForSwarmServiceConvergence(redis.appName, redis.serverId);
+			await buildRedis(redis);
+			await waitForSwarmServiceConvergence(redis.appName, redis.serverId);
+		}
 		await updateRedisById(redisId, {
 			applicationStatus: "done",
 		});

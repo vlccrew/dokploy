@@ -15,6 +15,7 @@ import { mounts } from "./mount";
 import { server } from "./server";
 import {
 	applicationStatus,
+	deploymentEngine,
 	type EndpointSpecSwarm,
 	EndpointSpecSwarmSchema,
 	type HealthCheckSwarm,
@@ -91,6 +92,9 @@ export const redis = pgTable("redis", {
 	detachDokployNetwork: boolean("detachDokployNetwork")
 		.notNull()
 		.default(false),
+	deploymentEngine: deploymentEngine("deploymentEngine")
+		.notNull()
+		.default("docker"),
 });
 
 export const redisRelations = relations(redis, ({ one, many }) => ({
@@ -142,6 +146,7 @@ const createSchema = createInsertSchema(redis, {
 	ulimitsSwarm: UlimitsSwarmSchema.nullable(),
 	networkIds: z.array(z.string()).optional(),
 	detachDokployNetwork: z.boolean().optional(),
+	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
 });
 
 export const apiCreateRedis = createSchema.pick({
@@ -152,6 +157,7 @@ export const apiCreateRedis = createSchema.pick({
 	environmentId: true,
 	description: true,
 	serverId: true,
+	deploymentEngine: true,
 });
 
 export const apiFindOneRedis = z.object({

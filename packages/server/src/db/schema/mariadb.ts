@@ -16,6 +16,7 @@ import { mounts } from "./mount";
 import { server } from "./server";
 import {
 	applicationStatus,
+	deploymentEngine,
 	type EndpointSpecSwarm,
 	EndpointSpecSwarmSchema,
 	type HealthCheckSwarm,
@@ -99,6 +100,9 @@ export const mariadb = pgTable("mariadb", {
 	detachDokployNetwork: boolean("detachDokployNetwork")
 		.notNull()
 		.default(false),
+	deploymentEngine: deploymentEngine("deploymentEngine")
+		.notNull()
+		.default("docker"),
 });
 
 export const mariadbRelations = relations(mariadb, ({ one, many }) => ({
@@ -161,6 +165,7 @@ const createSchema = createInsertSchema(mariadb, {
 	ulimitsSwarm: UlimitsSwarmSchema.nullable(),
 	networkIds: z.array(z.string()).optional(),
 	detachDokployNetwork: z.boolean().optional(),
+	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
 });
 
 export const apiCreateMariaDB = createSchema.pick({
@@ -174,6 +179,7 @@ export const apiCreateMariaDB = createSchema.pick({
 	databaseUser: true,
 	databasePassword: true,
 	serverId: true,
+	deploymentEngine: true,
 });
 
 export const apiFindOneMariaDB = z.object({

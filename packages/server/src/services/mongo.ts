@@ -12,6 +12,7 @@ import {
 	pullImage,
 	waitForSwarmServiceConvergence,
 } from "@dokploy/server/utils/docker/utils";
+import { orchestrateKubernetesDatabaseDeploy } from "@dokploy/server/utils/kubernetes/database";
 import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { eq, getTableColumns } from "drizzle-orm";
@@ -161,18 +162,42 @@ export const deployMongo = async (
 		});
 
 		onData?.("Starting mongo deployment...");
-		if (mongo.serverId) {
-			await execAsyncRemote(
-				mongo.serverId,
-				`docker pull ${quote([mongo.dockerImage])}`,
-				onData,
-			);
+		if (mongo.deploymentEngine === "kubernetes") {
+			await orchestrateKubernetesDatabaseDeploy({
+				input: {
+					kind: "mongo",
+					databaseId: mongo.mongoId,
+					appName: mongo.appName,
+					image: mongo.dockerImage,
+					env: mongo.env,
+					command: mongo.command,
+					args: mongo.args,
+					containerPort: 27017,
+					externalPort: mongo.externalPort,
+					dataDir: "/data/db",
+					memoryLimit: mongo.memoryLimit,
+					memoryReservation: mongo.memoryReservation,
+					cpuLimit: mongo.cpuLimit,
+					cpuReservation: mongo.cpuReservation,
+					mounts: mongo.mounts,
+					environment: mongo.environment,
+					replicaSets: mongo.replicaSets ?? false,
+				},
+			});
 		} else {
-			await pullImage(mongo.dockerImage, onData);
-		}
+			if (mongo.serverId) {
+				await execAsyncRemote(
+					mongo.serverId,
+					`docker pull ${quote([mongo.dockerImage])}`,
+					onData,
+				);
+			} else {
+				await pullImage(mongo.dockerImage, onData);
+			}
 
-		await buildMongo(mongo);
-		await waitForSwarmServiceConvergence(mongo.appName, mongo.serverId);
+			await buildMongo(mongo);
+			await waitForSwarmServiceConvergence(mongo.appName, mongo.serverId);
+		}
 		await updateMongoById(mongoId, {
 			applicationStatus: "done",
 		});

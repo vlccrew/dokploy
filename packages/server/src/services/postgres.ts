@@ -11,6 +11,7 @@ import {
 	pullImage,
 	waitForSwarmServiceConvergence,
 } from "@dokploy/server/utils/docker/utils";
+import { orchestrateKubernetesDatabaseDeploy } from "@dokploy/server/utils/kubernetes/database";
 import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { eq, getTableColumns } from "drizzle-orm";
@@ -156,19 +157,42 @@ export const deployPostgres = async (
 
 		onData?.("Starting postgres deployment...");
 
-		if (postgres.serverId) {
-			await execAsyncRemote(
-				postgres.serverId,
-				`docker pull ${quote([postgres.dockerImage])}`,
-				onData,
-			);
+		if (postgres.deploymentEngine === "kubernetes") {
+			await orchestrateKubernetesDatabaseDeploy({
+				input: {
+					kind: "postgres",
+					databaseId: postgres.postgresId,
+					appName: postgres.appName,
+					image: postgres.dockerImage,
+					env: postgres.env,
+					command: postgres.command,
+					args: postgres.args,
+					containerPort: 5432,
+					externalPort: postgres.externalPort,
+					dataDir: getMountPath(postgres.dockerImage),
+					memoryLimit: postgres.memoryLimit,
+					memoryReservation: postgres.memoryReservation,
+					cpuLimit: postgres.cpuLimit,
+					cpuReservation: postgres.cpuReservation,
+					mounts: postgres.mounts,
+					environment: postgres.environment,
+				},
+			});
 		} else {
-			await pullImage(postgres.dockerImage, onData);
+			if (postgres.serverId) {
+				await execAsyncRemote(
+					postgres.serverId,
+					`docker pull ${quote([postgres.dockerImage])}`,
+					onData,
+				);
+			} else {
+				await pullImage(postgres.dockerImage, onData);
+			}
+
+			await buildPostgres(postgres);
+
+			await waitForSwarmServiceConvergence(postgres.appName, postgres.serverId);
 		}
-
-		await buildPostgres(postgres);
-
-		await waitForSwarmServiceConvergence(postgres.appName, postgres.serverId);
 
 		await updatePostgresById(postgresId, {
 			applicationStatus: "done",

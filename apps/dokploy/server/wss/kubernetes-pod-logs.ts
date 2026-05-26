@@ -8,7 +8,14 @@ import {
 	validateRequest,
 } from "@dokploy/server";
 import { db } from "@dokploy/server/db";
-import { applications } from "@dokploy/server/db/schema";
+import {
+	applications,
+	mariadb,
+	mongo,
+	mysql,
+	postgres,
+	redis,
+} from "@dokploy/server/db/schema";
 import { eq } from "drizzle-orm";
 import { WebSocketServer } from "ws";
 
@@ -18,6 +25,21 @@ interface ResolvedTarget {
 	labelSelector: string;
 	organizationId: string;
 }
+
+const buildTarget = (
+	appName: string,
+	kubernetesId: string | null,
+	namespace: string | null,
+	organizationId: string,
+): ResolvedTarget | null => {
+	if (!kubernetesId || !namespace) return null;
+	return {
+		kubernetesId,
+		namespace,
+		labelSelector: `app.kubernetes.io/name=${k8sName(appName)}`,
+		organizationId,
+	};
+};
 
 const resolveFromApplication = async (
 	applicationId: string,
@@ -29,16 +51,99 @@ const resolveFromApplication = async (
 		},
 	});
 	if (!app) return null;
-	const kubernetesId = app.environment.project.kubernetesId;
-	const namespace = app.environment.project.kubernetesNamespace;
-	if (!kubernetesId || !namespace) return null;
-	return {
-		kubernetesId,
-		namespace,
-		labelSelector: `app.kubernetes.io/name=${k8sName(app.appName)}`,
-		organizationId: app.environment.project.organizationId,
-	};
+	return buildTarget(
+		app.appName,
+		app.environment.project.kubernetesId,
+		app.environment.project.kubernetesNamespace,
+		app.environment.project.organizationId,
+	);
 };
+
+const resolveFromDatabase = async (
+	serviceType: "postgres" | "redis" | "mysql" | "mariadb" | "mongo",
+	serviceId: string,
+): Promise<ResolvedTarget | null> => {
+	const withProject = {
+		environment: { with: { project: true } },
+	} as const;
+	if (serviceType === "postgres") {
+		const row = await db.query.postgres.findFirst({
+			where: eq(postgres.postgresId, serviceId),
+			with: withProject,
+		});
+		if (!row) return null;
+		return buildTarget(
+			row.appName,
+			row.environment.project.kubernetesId,
+			row.environment.project.kubernetesNamespace,
+			row.environment.project.organizationId,
+		);
+	}
+	if (serviceType === "redis") {
+		const row = await db.query.redis.findFirst({
+			where: eq(redis.redisId, serviceId),
+			with: withProject,
+		});
+		if (!row) return null;
+		return buildTarget(
+			row.appName,
+			row.environment.project.kubernetesId,
+			row.environment.project.kubernetesNamespace,
+			row.environment.project.organizationId,
+		);
+	}
+	if (serviceType === "mysql") {
+		const row = await db.query.mysql.findFirst({
+			where: eq(mysql.mysqlId, serviceId),
+			with: withProject,
+		});
+		if (!row) return null;
+		return buildTarget(
+			row.appName,
+			row.environment.project.kubernetesId,
+			row.environment.project.kubernetesNamespace,
+			row.environment.project.organizationId,
+		);
+	}
+	if (serviceType === "mariadb") {
+		const row = await db.query.mariadb.findFirst({
+			where: eq(mariadb.mariadbId, serviceId),
+			with: withProject,
+		});
+		if (!row) return null;
+		return buildTarget(
+			row.appName,
+			row.environment.project.kubernetesId,
+			row.environment.project.kubernetesNamespace,
+			row.environment.project.organizationId,
+		);
+	}
+	if (serviceType === "mongo") {
+		const row = await db.query.mongo.findFirst({
+			where: eq(mongo.mongoId, serviceId),
+			with: withProject,
+		});
+		if (!row) return null;
+		return buildTarget(
+			row.appName,
+			row.environment.project.kubernetesId,
+			row.environment.project.kubernetesNamespace,
+			row.environment.project.organizationId,
+		);
+	}
+	return null;
+};
+
+const DATABASE_SERVICE_TYPES = [
+	"postgres",
+	"redis",
+	"mysql",
+	"mariadb",
+	"mongo",
+] as const;
+type DatabaseServiceType = (typeof DATABASE_SERVICE_TYPES)[number];
+const isDatabaseServiceType = (s: string): s is DatabaseServiceType =>
+	(DATABASE_SERVICE_TYPES as readonly string[]).includes(s);
 
 export const setupKubernetesPodLogsWebSocketServer = (
 	server: http.Server<typeof http.IncomingMessage, typeof http.ServerResponse>,
@@ -60,6 +165,8 @@ export const setupKubernetesPodLogsWebSocketServer = (
 	wss.on("connection", async (ws, req) => {
 		const url = new URL(req.url || "", `http://${req.headers.host}`);
 		const applicationId = url.searchParams.get("applicationId");
+		const serviceType = url.searchParams.get("serviceType");
+		const serviceId = url.searchParams.get("serviceId");
 		const tailParam = url.searchParams.get("tail") ?? "100";
 		const tailLines = Number.parseInt(tailParam, 10);
 
@@ -68,8 +175,8 @@ export const setupKubernetesPodLogsWebSocketServer = (
 			ws.close();
 			return;
 		}
-		if (!applicationId) {
-			ws.close(4000, "applicationId is required");
+		if (!applicationId && !(serviceType && serviceId)) {
+			ws.close(4000, "applicationId or serviceType+serviceId is required");
 			return;
 		}
 		if (Number.isNaN(tailLines) || tailLines <= 0 || tailLines > 10_000) {
@@ -77,10 +184,19 @@ export const setupKubernetesPodLogsWebSocketServer = (
 			return;
 		}
 
-		const target = await resolveFromApplication(applicationId);
+		let target: ResolvedTarget | null = null;
+		if (applicationId) {
+			target = await resolveFromApplication(applicationId);
+		} else if (serviceType && serviceId) {
+			if (!isDatabaseServiceType(serviceType)) {
+				ws.close(4000, "Unsupported serviceType");
+				return;
+			}
+			target = await resolveFromDatabase(serviceType, serviceId);
+		}
 		if (!target) {
 			ws.send(
-				"This application is not bound to a Kubernetes cluster yet. Deploy it first.",
+				"This service is not bound to a Kubernetes cluster yet. Deploy it first.",
 			);
 			ws.close(4004, "No k8s binding");
 			return;

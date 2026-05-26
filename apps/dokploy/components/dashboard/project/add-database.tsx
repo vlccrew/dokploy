@@ -95,6 +95,7 @@ const baseDatabaseSchema = z.object({
 	dockerImage: z.string(),
 	description: z.string().nullable(),
 	serverId: z.string().nullable(),
+	deploymentEngine: z.enum(["docker", "kubernetes"]).default("docker"),
 });
 
 const mySchema = z
@@ -250,11 +251,13 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 			databaseName: "",
 			databaseUser: "",
 			serverId: null,
+			deploymentEngine: "docker",
 		},
 		resolver: zodResolver(mySchema),
 	});
 	const sqldNode = form.watch("sqldNode");
 	const type = form.watch("type");
+	const deploymentEngine = form.watch("deploymentEngine");
 	const activeMutation = {
 		libsql: libsqlMutation,
 		mariadb: mariadbMutation,
@@ -268,17 +271,25 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 		const defaultDockerImage =
 			data.dockerImage || dockerImageDefaultPlaceholder[data.type];
 
+		const isK8s = data.deploymentEngine === "kubernetes";
+		const resolvedServerId = isK8s
+			? null
+			: data.serverId === "dokploy"
+				? null
+				: data.serverId;
+
 		let promise: Promise<unknown> | null = null;
 		const commonParams = {
 			name: data.name,
 			appName: data.appName,
 			dockerImage: defaultDockerImage,
-			serverId: data.serverId === "dokploy" ? undefined : data.serverId,
+			serverId: resolvedServerId,
 			environmentId,
 			description: data.description,
 		};
 
 		if (data.type === "libsql") {
+			// libSQL is not in scope for the K8s deployment option this PR adds.
 			promise = libsqlMutation.mutateAsync({
 				...commonParams,
 				sqldNode: data.sqldNode,
@@ -287,7 +298,7 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 				databasePassword: data.databasePassword,
 				databaseUser:
 					data.databaseUser || databasesUserDefaultPlaceholder[data.type],
-				serverId: data.serverId === "dokploy" ? null : data.serverId,
+				serverId: resolvedServerId,
 			});
 		} else if (data.type === "mariadb") {
 			promise = mariadbMutation.mutateAsync({
@@ -297,7 +308,8 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 				databaseName: data.databaseName || "mariadb",
 				databaseUser:
 					data.databaseUser || databasesUserDefaultPlaceholder[data.type],
-				serverId: data.serverId === "dokploy" ? null : data.serverId,
+				serverId: resolvedServerId,
+				deploymentEngine: data.deploymentEngine,
 			});
 		} else if (data.type === "mongo") {
 			promise = mongoMutation.mutateAsync({
@@ -305,8 +317,9 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 				databasePassword: data.databasePassword,
 				databaseUser:
 					data.databaseUser || databasesUserDefaultPlaceholder[data.type],
-				serverId: data.serverId === "dokploy" ? null : data.serverId,
+				serverId: resolvedServerId,
 				replicaSets: data.replicaSets,
+				deploymentEngine: data.deploymentEngine,
 			});
 		} else if (data.type === "mysql") {
 			promise = mysqlMutation.mutateAsync({
@@ -315,8 +328,9 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 				databaseName: data.databaseName || "mysql",
 				databaseUser:
 					data.databaseUser || databasesUserDefaultPlaceholder[data.type],
-				serverId: data.serverId === "dokploy" ? null : data.serverId,
+				serverId: resolvedServerId,
 				databaseRootPassword: data.databaseRootPassword || "",
+				deploymentEngine: data.deploymentEngine,
 			});
 		} else if (data.type === "postgres") {
 			promise = postgresMutation.mutateAsync({
@@ -325,13 +339,15 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 				databaseName: data.databaseName || "postgres",
 				databaseUser:
 					data.databaseUser || databasesUserDefaultPlaceholder[data.type],
-				serverId: data.serverId === "dokploy" ? null : data.serverId,
+				serverId: resolvedServerId,
+				deploymentEngine: data.deploymentEngine,
 			});
 		} else if (data.type === "redis") {
 			promise = redisMutation.mutateAsync({
 				...commonParams,
 				databasePassword: data.databasePassword,
-				serverId: data.serverId === "dokploy" ? null : data.serverId,
+				serverId: resolvedServerId,
+				deploymentEngine: data.deploymentEngine,
 			});
 		}
 
@@ -463,7 +479,35 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 										</FormItem>
 									)}
 								/>
-								{shouldShowServerDropdown && (
+								{type !== "libsql" && (
+									<FormField
+										control={form.control}
+										name="deploymentEngine"
+										render={({ field }) => (
+											<FormItem>
+												<FormLabel>Engine</FormLabel>
+												<Select
+													onValueChange={(v) => field.onChange(v)}
+													value={field.value}
+												>
+													<SelectTrigger>
+														<SelectValue placeholder="Select engine" />
+													</SelectTrigger>
+													<SelectContent>
+														<SelectItem value="docker">
+															Docker / Swarm
+														</SelectItem>
+														<SelectItem value="kubernetes">
+															Kubernetes
+														</SelectItem>
+													</SelectContent>
+												</Select>
+												<FormMessage />
+											</FormItem>
+										)}
+									/>
+								)}
+								{deploymentEngine === "docker" && shouldShowServerDropdown && (
 									<FormField
 										control={form.control}
 										name="serverId"
@@ -759,7 +803,7 @@ export const AddDatabase = ({ environmentId, projectName }: Props) => {
 									}}
 								/>
 
-								{type === "mongo" && (
+								{type === "mongo" && deploymentEngine === "docker" && (
 									<FormField
 										control={form.control}
 										name="replicaSets"
