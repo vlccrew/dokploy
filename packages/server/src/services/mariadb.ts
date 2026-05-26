@@ -139,13 +139,16 @@ export const deployMariadb = async (
 		});
 		onData?.("Starting mariadb deployment...");
 		if (mariadb.deploymentEngine === "kubernetes") {
+			const defaultEnv = `MARIADB_DATABASE="${mariadb.databaseName}"\nMARIADB_USER="${mariadb.databaseUser}"\nMARIADB_PASSWORD="${mariadb.databasePassword}"\nMARIADB_ROOT_PASSWORD="${mariadb.databaseRootPassword}"${
+				mariadb.env ? `\n${mariadb.env}` : ""
+			}`;
 			await orchestrateKubernetesDatabaseDeploy({
 				input: {
 					kind: "mariadb",
 					databaseId: mariadb.mariadbId,
 					appName: mariadb.appName,
 					image: mariadb.dockerImage,
-					env: mariadb.env,
+					env: defaultEnv,
 					command: mariadb.command,
 					args: mariadb.args,
 					containerPort: 3306,

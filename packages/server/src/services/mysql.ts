@@ -137,13 +137,21 @@ export const deployMySql = async (
 		});
 		onData?.("Starting mysql deployment...");
 		if (mysql.deploymentEngine === "kubernetes") {
+			const defaultEnv =
+				mysql.databaseUser !== "root"
+					? `MYSQL_USER="${mysql.databaseUser}"\nMYSQL_DATABASE="${mysql.databaseName}"\nMYSQL_PASSWORD="${mysql.databasePassword}"\nMYSQL_ROOT_PASSWORD="${mysql.databaseRootPassword}"${
+							mysql.env ? `\n${mysql.env}` : ""
+						}`
+					: `MYSQL_DATABASE="${mysql.databaseName}"\nMYSQL_ROOT_PASSWORD="${mysql.databaseRootPassword}"${
+							mysql.env ? `\n${mysql.env}` : ""
+						}`;
 			await orchestrateKubernetesDatabaseDeploy({
 				input: {
 					kind: "mysql",
 					databaseId: mysql.mysqlId,
 					appName: mysql.appName,
 					image: mysql.dockerImage,
-					env: mysql.env,
+					env: defaultEnv,
 					command: mysql.command,
 					args: mysql.args,
 					containerPort: 3306,

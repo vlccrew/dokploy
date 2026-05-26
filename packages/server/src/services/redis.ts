@@ -109,13 +109,16 @@ export const deployRedis = async (
 
 		onData?.("Starting redis deployment...");
 		if (redis.deploymentEngine === "kubernetes") {
+			const defaultEnv = `REDIS_PASSWORD="${redis.databasePassword}"${
+				redis.env ? `\n${redis.env}` : ""
+			}`;
 			await orchestrateKubernetesDatabaseDeploy({
 				input: {
 					kind: "redis",
 					databaseId: redis.redisId,
 					appName: redis.appName,
 					image: redis.dockerImage,
-					env: redis.env,
+					env: defaultEnv,
 					command: redis.command,
 					args: redis.args,
 					containerPort: 6379,

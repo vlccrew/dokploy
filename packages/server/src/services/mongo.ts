@@ -154,13 +154,18 @@ export const deployMongo = async (
 
 		onData?.("Starting mongo deployment...");
 		if (mongo.deploymentEngine === "kubernetes") {
+			// replicaSets=true is rejected upstream by the K8s orchestrator,
+			// so we don't need the MONGO_INITDB_DATABASE=admin branch here.
+			const defaultEnv = `MONGO_INITDB_ROOT_USERNAME="${mongo.databaseUser}"\nMONGO_INITDB_ROOT_PASSWORD="${mongo.databasePassword}"${
+				mongo.env ? `\n${mongo.env}` : ""
+			}`;
 			await orchestrateKubernetesDatabaseDeploy({
 				input: {
 					kind: "mongo",
 					databaseId: mongo.mongoId,
 					appName: mongo.appName,
 					image: mongo.dockerImage,
-					env: mongo.env,
+					env: defaultEnv,
 					command: mongo.command,
 					args: mongo.args,
 					containerPort: 27017,

@@ -149,13 +149,18 @@ export const deployPostgres = async (
 		onData?.("Starting postgres deployment...");
 
 		if (postgres.deploymentEngine === "kubernetes") {
+			// Mirror buildPostgres: postgres needs POSTGRES_DB/USER/PASSWORD
+			// to initialize its data directory on first boot.
+			const defaultEnv = `POSTGRES_DB="${postgres.databaseName}"\nPOSTGRES_USER="${postgres.databaseUser}"\nPOSTGRES_PASSWORD="${postgres.databasePassword}"${
+				postgres.env ? `\n${postgres.env}` : ""
+			}`;
 			await orchestrateKubernetesDatabaseDeploy({
 				input: {
 					kind: "postgres",
 					databaseId: postgres.postgresId,
 					appName: postgres.appName,
 					image: postgres.dockerImage,
-					env: postgres.env,
+					env: defaultEnv,
 					command: postgres.command,
 					args: postgres.args,
 					containerPort: 5432,
