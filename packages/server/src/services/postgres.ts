@@ -151,7 +151,15 @@ export const deployPostgres = async (
 		if (postgres.deploymentEngine === "kubernetes") {
 			// Mirror buildPostgres: postgres needs POSTGRES_DB/USER/PASSWORD
 			// to initialize its data directory on first boot.
-			const defaultEnv = `POSTGRES_DB="${postgres.databaseName}"\nPOSTGRES_USER="${postgres.databaseUser}"\nPOSTGRES_PASSWORD="${postgres.databasePassword}"${
+			//
+			// PGDATA must point at a SUBDIRECTORY of the mounted PVC. Cloud
+			// block-storage PVCs (EBS, Azure Disk, ext4 in general) ship a
+			// `lost+found` directory at the FS root, and initdb refuses to
+			// initialize a non-empty directory. Pointing PGDATA at a subdir
+			// is Postgres' own recommended workaround for K8s/cloud volumes.
+			const mountPath = getMountPath(postgres.dockerImage);
+			const pgdata = `${mountPath}/pgdata`;
+			const defaultEnv = `POSTGRES_DB="${postgres.databaseName}"\nPOSTGRES_USER="${postgres.databaseUser}"\nPOSTGRES_PASSWORD="${postgres.databasePassword}"\nPGDATA="${pgdata}"${
 				postgres.env ? `\n${postgres.env}` : ""
 			}`;
 			await orchestrateKubernetesDatabaseDeploy({
