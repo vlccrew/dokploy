@@ -94,6 +94,26 @@ export const backupRouter = createTRPCRouter({
 					});
 				}
 
+				// Backups aren't yet implemented for Kubernetes-deployed databases:
+				// they require pod-exec to run pg_dump/mongodump/etc., which the
+				// docker-only backup utilities don't know how to do.
+				const engineOwner = input.postgresId
+					? await findPostgresById(input.postgresId)
+					: input.mysqlId
+						? await findMySqlById(input.mysqlId)
+						: input.mariadbId
+							? await findMariadbById(input.mariadbId)
+							: input.mongoId
+								? await findMongoById(input.mongoId)
+								: null;
+				if (engineOwner?.deploymentEngine === "kubernetes") {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message:
+							"Backups aren't supported for Kubernetes-deployed databases yet.",
+					});
+				}
+
 				const newBackup = await createBackup(input);
 				const backup = await findBackupById(newBackup.backupId);
 

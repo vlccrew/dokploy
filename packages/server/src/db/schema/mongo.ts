@@ -16,6 +16,7 @@ import { mounts } from "./mount";
 import { server } from "./server";
 import {
 	applicationStatus,
+	deploymentEngine,
 	type EndpointSpecSwarm,
 	EndpointSpecSwarmSchema,
 	type HealthCheckSwarm,
@@ -91,6 +92,9 @@ export const mongo = pgTable("mongo", {
 		onDelete: "cascade",
 	}),
 	replicaSets: boolean("replicaSets").default(false),
+	deploymentEngine: deploymentEngine("deploymentEngine")
+		.notNull()
+		.default("docker"),
 });
 
 export const mongoRelations = relations(mongo, ({ one, many }) => ({
@@ -145,6 +149,7 @@ const createSchema = createInsertSchema(mongo, {
 	stopGracePeriodSwarm: z.number().nullable(),
 	endpointSpecSwarm: EndpointSpecSwarmSchema.nullable(),
 	ulimitsSwarm: UlimitsSwarmSchema.nullable(),
+	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
 });
 
 export const apiCreateMongo = createSchema.pick({
@@ -157,6 +162,7 @@ export const apiCreateMongo = createSchema.pick({
 	databasePassword: true,
 	serverId: true,
 	replicaSets: true,
+	deploymentEngine: true,
 });
 
 export const apiFindOneMongo = z.object({

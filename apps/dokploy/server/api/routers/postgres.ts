@@ -1,5 +1,6 @@
 import {
 	checkPortInUse,
+	cleanupKubernetesDatabase,
 	createMount,
 	createPostgres,
 	deployPostgres,
@@ -17,6 +18,7 @@ import {
 	rebuildDatabase,
 	removePostgresById,
 	removeService,
+	scaleKubernetesDatabase,
 	startService,
 	startServiceRemote,
 	stopService,
@@ -146,7 +148,23 @@ export const postgresRouter = createTRPCRouter({
 			});
 			const service = await findPostgresById(input.postgresId);
 
-			if (service.serverId) {
+			if (service.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } =
+					service.environment.project;
+				if (!kubernetesId || !kubernetesNamespace) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message:
+							"This database is set to Kubernetes but the project has no cluster/namespace bound. Deploy it once first.",
+					});
+				}
+				await scaleKubernetesDatabase({
+					kubernetesId,
+					namespace: kubernetesNamespace,
+					appName: service.appName,
+					replicas: 1,
+				});
+			} else if (service.serverId) {
 				await startServiceRemote(service.serverId, service.appName);
 			} else {
 				await startService(service.appName);
@@ -170,7 +188,18 @@ export const postgresRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const postgres = await findPostgresById(input.postgresId);
-			if (postgres.serverId) {
+			if (postgres.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } =
+					postgres.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: postgres.appName,
+						replicas: 0,
+					});
+				}
+			} else if (postgres.serverId) {
 				await stopServiceRemote(postgres.serverId, postgres.appName);
 			} else {
 				await stopService(postgres.appName);
@@ -317,8 +346,24 @@ export const postgresRouter = createTRPCRouter({
 			});
 			const backups = await findBackupsByDbId(input.postgresId, "postgres");
 
+			const isKubernetes = postgres.deploymentEngine === "kubernetes";
+			const k8sId = postgres.environment.project.kubernetesId;
+			const k8sNs = postgres.environment.project.kubernetesNamespace;
+
 			const cleanupOperations = [
-				async () => await removeService(postgres?.appName, postgres.serverId),
+				async () => {
+					if (isKubernetes && k8sId && k8sNs) {
+						await cleanupKubernetesDatabase({
+							kind: "postgres",
+							databaseId: postgres.postgresId,
+							appName: postgres.appName,
+							namespace: k8sNs,
+							kubernetesId: k8sId,
+						});
+					} else {
+						await removeService(postgres?.appName, postgres.serverId);
+					}
+				},
 				async () => await cancelJobs(backups),
 				async () => await removePostgresById(input.postgresId),
 			];
@@ -362,19 +407,41 @@ export const postgresRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const postgres = await findPostgresById(input.postgresId);
-			if (postgres.serverId) {
-				await stopServiceRemote(postgres.serverId, postgres.appName);
+			if (postgres.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } =
+					postgres.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: postgres.appName,
+						replicas: 0,
+					});
+					await updatePostgresById(input.postgresId, {
+						applicationStatus: "idle",
+					});
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: postgres.appName,
+						replicas: 1,
+					});
+				}
 			} else {
-				await stopService(postgres.appName);
-			}
-			await updatePostgresById(input.postgresId, {
-				applicationStatus: "idle",
-			});
+				if (postgres.serverId) {
+					await stopServiceRemote(postgres.serverId, postgres.appName);
+				} else {
+					await stopService(postgres.appName);
+				}
+				await updatePostgresById(input.postgresId, {
+					applicationStatus: "idle",
+				});
 
-			if (postgres.serverId) {
-				await startServiceRemote(postgres.serverId, postgres.appName);
-			} else {
-				await startService(postgres.appName);
+				if (postgres.serverId) {
+					await startServiceRemote(postgres.serverId, postgres.appName);
+				} else {
+					await startService(postgres.appName);
+				}
 			}
 			await updatePostgresById(input.postgresId, {
 				applicationStatus: "done",

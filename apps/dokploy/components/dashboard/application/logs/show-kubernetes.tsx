@@ -28,11 +28,25 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 
+type ServiceType = "postgres" | "redis" | "mysql" | "mariadb" | "mongo";
+
 interface Props {
-	applicationId: string;
+	/** Applications use `applicationId`; databases pass `serviceType`+`serviceId`. */
+	applicationId?: string;
+	serviceType?: ServiceType;
+	serviceId?: string;
 }
 
-export const ShowKubernetesPodLogs: React.FC<Props> = ({ applicationId }) => {
+export const ShowKubernetesPodLogs: React.FC<Props> = ({
+	applicationId,
+	serviceType,
+	serviceId,
+}) => {
+	// The effect depends on a stable value; serialize the target so a parent
+	// switching between application/database modes triggers a fresh connection.
+	const target =
+		applicationId ??
+		(serviceType && serviceId ? `${serviceType}:${serviceId}` : "");
 	const [rawLogs, setRawLogs] = React.useState("");
 	const [filteredLogs, setFilteredLogs] = React.useState<LogLine[]>([]);
 	const [autoScroll, setAutoScroll] = React.useState(true);
@@ -77,7 +91,7 @@ export const ShowKubernetesPodLogs: React.FC<Props> = ({ applicationId }) => {
 	};
 
 	useEffect(() => {
-		if (!applicationId) return;
+		if (!target) return;
 
 		let isCurrent = true;
 		let noDataTimeout: ReturnType<typeof setTimeout> | undefined;
@@ -90,9 +104,14 @@ export const ShowKubernetesPodLogs: React.FC<Props> = ({ applicationId }) => {
 
 		const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
 		const params = new globalThis.URLSearchParams({
-			applicationId,
 			tail: lines.toString(),
 		});
+		if (applicationId) {
+			params.set("applicationId", applicationId);
+		} else if (serviceType && serviceId) {
+			params.set("serviceType", serviceType);
+			params.set("serviceId", serviceId);
+		}
 		const wsUrl = `${protocol}//${window.location.host}/kubernetes-pod-logs?${params.toString()}`;
 		const ws = new WebSocket(wsUrl);
 
@@ -142,7 +161,7 @@ export const ShowKubernetesPodLogs: React.FC<Props> = ({ applicationId }) => {
 			if (noDataTimeout) clearTimeout(noDataTimeout);
 			if (ws.readyState === WebSocket.OPEN) ws.close();
 		};
-	}, [applicationId, lines]);
+	}, [target, lines, applicationId, serviceType, serviceId]);
 
 	useEffect(() => {
 		const parsed = parseLogs(rawLogs);

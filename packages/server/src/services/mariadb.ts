@@ -8,6 +8,7 @@ import {
 import { generatePassword } from "@dokploy/server/templates";
 import { buildMariadb } from "@dokploy/server/utils/databases/mariadb";
 import { pullImage } from "@dokploy/server/utils/docker/utils";
+import { orchestrateKubernetesDatabaseDeploy } from "@dokploy/server/utils/kubernetes/database";
 import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { eq, getTableColumns } from "drizzle-orm";
@@ -137,17 +138,40 @@ export const deployMariadb = async (
 			applicationStatus: "running",
 		});
 		onData?.("Starting mariadb deployment...");
-		if (mariadb.serverId) {
-			await execAsyncRemote(
-				mariadb.serverId,
-				`docker pull ${mariadb.dockerImage}`,
-				onData,
-			);
+		if (mariadb.deploymentEngine === "kubernetes") {
+			await orchestrateKubernetesDatabaseDeploy({
+				input: {
+					kind: "mariadb",
+					databaseId: mariadb.mariadbId,
+					appName: mariadb.appName,
+					image: mariadb.dockerImage,
+					env: mariadb.env,
+					command: mariadb.command,
+					args: mariadb.args,
+					containerPort: 3306,
+					externalPort: mariadb.externalPort,
+					dataDir: "/var/lib/mysql",
+					memoryLimit: mariadb.memoryLimit,
+					memoryReservation: mariadb.memoryReservation,
+					cpuLimit: mariadb.cpuLimit,
+					cpuReservation: mariadb.cpuReservation,
+					mounts: mariadb.mounts,
+					environment: mariadb.environment,
+				},
+			});
 		} else {
-			await pullImage(mariadb.dockerImage, onData);
-		}
+			if (mariadb.serverId) {
+				await execAsyncRemote(
+					mariadb.serverId,
+					`docker pull ${mariadb.dockerImage}`,
+					onData,
+				);
+			} else {
+				await pullImage(mariadb.dockerImage, onData);
+			}
 
-		await buildMariadb(mariadb);
+			await buildMariadb(mariadb);
+		}
 		await updateMariadbById(mariadbId, {
 			applicationStatus: "done",
 		});
