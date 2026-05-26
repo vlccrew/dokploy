@@ -165,7 +165,6 @@ export const deployMongo = async (
 					args: mongo.args,
 					containerPort: 27017,
 					externalPort: mongo.externalPort,
-					dataDir: "/data/db",
 					memoryLimit: mongo.memoryLimit,
 					memoryReservation: mongo.memoryReservation,
 					cpuLimit: mongo.cpuLimit,

@@ -120,7 +120,6 @@ export const deployRedis = async (
 					args: redis.args,
 					containerPort: 6379,
 					externalPort: redis.externalPort,
-					dataDir: "/data",
 					memoryLimit: redis.memoryLimit,
 					memoryReservation: redis.memoryReservation,
 					cpuLimit: redis.cpuLimit,

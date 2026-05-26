@@ -148,7 +148,6 @@ export const deployMySql = async (
 					args: mysql.args,
 					containerPort: 3306,
 					externalPort: mysql.externalPort,
-					dataDir: "/var/lib/mysql",
 					memoryLimit: mysql.memoryLimit,
 					memoryReservation: mysql.memoryReservation,
 					cpuLimit: mysql.cpuLimit,

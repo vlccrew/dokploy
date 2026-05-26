@@ -160,7 +160,6 @@ export const deployPostgres = async (
 					args: postgres.args,
 					containerPort: 5432,
 					externalPort: postgres.externalPort,
-					dataDir: getMountPath(postgres.dockerImage),
 					memoryLimit: postgres.memoryLimit,
 					memoryReservation: postgres.memoryReservation,
 					cpuLimit: postgres.cpuLimit,

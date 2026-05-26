@@ -150,7 +150,6 @@ export const deployMariadb = async (
 					args: mariadb.args,
 					containerPort: 3306,
 					externalPort: mariadb.externalPort,
-					dataDir: "/var/lib/mysql",
 					memoryLimit: mariadb.memoryLimit,
 					memoryReservation: mariadb.memoryReservation,
 					cpuLimit: mariadb.cpuLimit,
