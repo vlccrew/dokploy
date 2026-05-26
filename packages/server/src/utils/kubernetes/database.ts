@@ -57,19 +57,21 @@ export interface DatabaseDeploymentInput {
 	args?: string[] | null;
 	containerPort: number;
 	externalPort?: number | null;
-	dataDir: string;
 	memoryLimit?: string | null;
 	memoryReservation?: string | null;
 	cpuLimit?: string | null;
 	cpuReservation?: string | null;
+	/** All mounts the pod should see. The database's data dir is expected
+	 * to live here as a `type: "volume"` mount — the create-database flow
+	 * inserts it automatically via `createMount`. We do not synthesize a
+	 * data PVC ourselves: that would double-mount the data dir when the
+	 * user mount is already present. */
 	mounts: DatabaseMount[];
 	environment: DatabaseEnvironmentContext;
 	/** Mongo only: replicaSets requires a custom init script that's not yet
 	 * implemented on K8s — when true the orchestrator rejects deploy. */
 	replicaSets?: boolean;
 }
-
-const DATA_VOLUME_NAME = "data";
 
 const parseMemory = (value?: string | null): string | undefined => {
 	if (!value) return undefined;
@@ -177,8 +179,7 @@ const buildUserVolumes = (
 export interface DatabaseManifestBundle {
 	deployment: V1Deployment;
 	service: V1Service;
-	dataPvc: V1PersistentVolumeClaim;
-	userPvcs: V1PersistentVolumeClaim[];
+	pvcs: V1PersistentVolumeClaim[];
 	configMaps: V1ConfigMap[];
 	appName: string;
 }
@@ -197,16 +198,6 @@ export const buildDatabaseManifest = (
 		"dokploy.io/database-kind": input.kind,
 	};
 
-	const dataPvc: V1PersistentVolumeClaim = {
-		apiVersion: "v1",
-		kind: "PersistentVolumeClaim",
-		metadata: { name: `${appName}-data`, namespace, labels },
-		spec: {
-			accessModes: ["ReadWriteOnce"],
-			resources: { requests: { storage: "1Gi" } },
-		},
-	};
-
 	const userPieces = buildUserVolumes(
 		input.mounts ?? [],
 		appName,
@@ -214,22 +205,15 @@ export const buildDatabaseManifest = (
 		labels,
 	);
 
-	const volumeMounts: V1Container["volumeMounts"] = [
-		{ name: DATA_VOLUME_NAME, mountPath: input.dataDir },
-		...userPieces.map(({ name, mountPath, subPath }) => ({
+	const volumeMounts: V1Container["volumeMounts"] = userPieces.map(
+		({ name, mountPath, subPath }) => ({
 			name,
 			mountPath,
 			...(subPath && { subPath }),
-		})),
-	];
+		}),
+	);
 
-	const volumes = [
-		{
-			name: DATA_VOLUME_NAME,
-			persistentVolumeClaim: { claimName: `${appName}-data` },
-		},
-		...userPieces.map(({ name, volume }) => ({ name, ...volume })),
-	];
+	const volumes = userPieces.map(({ name, volume }) => ({ name, ...volume }));
 
 	const cpuLimit = parseCpu(input.cpuLimit);
 	const memoryLimit = parseMemory(input.memoryLimit);
@@ -264,7 +248,7 @@ export const buildDatabaseManifest = (
 		},
 		...(input.command && { command: ["/bin/sh", "-c", input.command] }),
 		...(input.args && input.args.length > 0 && { args: input.args }),
-		volumeMounts,
+		...(volumeMounts.length > 0 && { volumeMounts }),
 	};
 
 	const configMaps = userPieces
@@ -298,7 +282,7 @@ export const buildDatabaseManifest = (
 				spec: {
 					containers: [container],
 					restartPolicy: "Always",
-					volumes,
+					...(volumes.length > 0 && { volumes }),
 				},
 			},
 		},
@@ -338,8 +322,7 @@ export const buildDatabaseManifest = (
 	return {
 		deployment,
 		service,
-		dataPvc,
-		userPvcs: userPieces
+		pvcs: userPieces
 			.map((p) => p.pvc)
 			.filter((p): p is V1PersistentVolumeClaim => Boolean(p)),
 		configMaps,
@@ -530,11 +513,11 @@ export const orchestrateKubernetesDatabaseDeploy = async ({
 
 	const bundle = buildDatabaseManifest(input, envObj, namespace, envSecretName);
 
-	await ensurePvc(client, bundle.dataPvc);
-	await log(`✅ Data PVC '${bundle.dataPvc.metadata?.name}' ready`);
-
-	for (const pvc of bundle.userPvcs) {
+	for (const pvc of bundle.pvcs) {
 		await ensurePvc(client, pvc);
+	}
+	if (bundle.pvcs.length > 0) {
+		await log(`✅ ${bundle.pvcs.length} PVC(s) ready`);
 	}
 	for (const cm of bundle.configMaps) {
 		await upsertConfigMap(client, cm);
