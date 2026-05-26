@@ -9,6 +9,7 @@ import { mounts } from "./mount";
 import { server } from "./server";
 import {
 	applicationStatus,
+	deploymentEngine,
 	type EndpointSpecSwarm,
 	EndpointSpecSwarmSchema,
 	type HealthCheckSwarm,
@@ -85,6 +86,9 @@ export const postgres = pgTable("postgres", {
 	serverId: text("serverId").references(() => server.serverId, {
 		onDelete: "cascade",
 	}),
+	deploymentEngine: deploymentEngine("deploymentEngine")
+		.notNull()
+		.default("docker"),
 });
 
 export const postgresRelations = relations(postgres, ({ one, many }) => ({
@@ -139,6 +143,7 @@ const createSchema = createInsertSchema(postgres, {
 	stopGracePeriodSwarm: z.number().nullable(),
 	endpointSpecSwarm: EndpointSpecSwarmSchema.nullable(),
 	ulimitsSwarm: UlimitsSwarmSchema.nullable(),
+	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
 });
 
 export const apiCreatePostgres = createSchema.pick({
@@ -151,6 +156,7 @@ export const apiCreatePostgres = createSchema.pick({
 	environmentId: true,
 	description: true,
 	serverId: true,
+	deploymentEngine: true,
 });
 
 export const apiFindOnePostgres = z.object({

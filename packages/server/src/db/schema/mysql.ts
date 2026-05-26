@@ -9,6 +9,7 @@ import { mounts } from "./mount";
 import { server } from "./server";
 import {
 	applicationStatus,
+	deploymentEngine,
 	type EndpointSpecSwarm,
 	EndpointSpecSwarmSchema,
 	type HealthCheckSwarm,
@@ -85,6 +86,9 @@ export const mysql = pgTable("mysql", {
 	serverId: text("serverId").references(() => server.serverId, {
 		onDelete: "cascade",
 	}),
+	deploymentEngine: deploymentEngine("deploymentEngine")
+		.notNull()
+		.default("docker"),
 });
 
 export const mysqlRelations = relations(mysql, ({ one, many }) => ({
@@ -144,6 +148,7 @@ const createSchema = createInsertSchema(mysql, {
 	stopGracePeriodSwarm: z.number().nullable(),
 	endpointSpecSwarm: EndpointSpecSwarmSchema.nullable(),
 	ulimitsSwarm: UlimitsSwarmSchema.nullable(),
+	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
 });
 
 export const apiCreateMySql = createSchema.pick({
@@ -157,6 +162,7 @@ export const apiCreateMySql = createSchema.pick({
 	databasePassword: true,
 	databaseRootPassword: true,
 	serverId: true,
+	deploymentEngine: true,
 });
 
 export const apiFindOneMySql = z.object({

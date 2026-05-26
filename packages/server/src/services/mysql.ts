@@ -8,6 +8,7 @@ import {
 import { generatePassword } from "@dokploy/server/templates";
 import { buildMysql } from "@dokploy/server/utils/databases/mysql";
 import { pullImage } from "@dokploy/server/utils/docker/utils";
+import { orchestrateKubernetesDatabaseDeploy } from "@dokploy/server/utils/kubernetes/database";
 import { execAsyncRemote } from "@dokploy/server/utils/process/execAsync";
 import { TRPCError } from "@trpc/server";
 import { eq, getTableColumns } from "drizzle-orm";
@@ -135,17 +136,40 @@ export const deployMySql = async (
 			applicationStatus: "running",
 		});
 		onData?.("Starting mysql deployment...");
-		if (mysql.serverId) {
-			await execAsyncRemote(
-				mysql.serverId,
-				`docker pull ${mysql.dockerImage}`,
-				onData,
-			);
+		if (mysql.deploymentEngine === "kubernetes") {
+			await orchestrateKubernetesDatabaseDeploy({
+				input: {
+					kind: "mysql",
+					databaseId: mysql.mysqlId,
+					appName: mysql.appName,
+					image: mysql.dockerImage,
+					env: mysql.env,
+					command: mysql.command,
+					args: mysql.args,
+					containerPort: 3306,
+					externalPort: mysql.externalPort,
+					dataDir: "/var/lib/mysql",
+					memoryLimit: mysql.memoryLimit,
+					memoryReservation: mysql.memoryReservation,
+					cpuLimit: mysql.cpuLimit,
+					cpuReservation: mysql.cpuReservation,
+					mounts: mysql.mounts,
+					environment: mysql.environment,
+				},
+			});
 		} else {
-			await pullImage(mysql.dockerImage, onData);
-		}
+			if (mysql.serverId) {
+				await execAsyncRemote(
+					mysql.serverId,
+					`docker pull ${mysql.dockerImage}`,
+					onData,
+				);
+			} else {
+				await pullImage(mysql.dockerImage, onData);
+			}
 
-		await buildMysql(mysql);
+			await buildMysql(mysql);
+		}
 		await updateMySqlById(mysqlId, {
 			applicationStatus: "done",
 		});

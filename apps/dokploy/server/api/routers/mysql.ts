@@ -1,5 +1,6 @@
 import {
 	checkPortInUse,
+	cleanupKubernetesDatabase,
 	createMount,
 	createMysql,
 	deployMySql,
@@ -16,6 +17,7 @@ import {
 	rebuildDatabase,
 	removeMySqlById,
 	removeService,
+	scaleKubernetesDatabase,
 	startService,
 	startServiceRemote,
 	stopService,
@@ -142,7 +144,23 @@ export const mysqlRouter = createTRPCRouter({
 			});
 			const service = await findMySqlById(input.mysqlId);
 
-			if (service.serverId) {
+			if (service.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } =
+					service.environment.project;
+				if (!kubernetesId || !kubernetesNamespace) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message:
+							"This database is set to Kubernetes but the project has no cluster/namespace bound. Deploy it once first.",
+					});
+				}
+				await scaleKubernetesDatabase({
+					kubernetesId,
+					namespace: kubernetesNamespace,
+					appName: service.appName,
+					replicas: 1,
+				});
+			} else if (service.serverId) {
 				await startServiceRemote(service.serverId, service.appName);
 			} else {
 				await startService(service.appName);
@@ -166,7 +184,17 @@ export const mysqlRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const mongo = await findMySqlById(input.mysqlId);
-			if (mongo.serverId) {
+			if (mongo.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } = mongo.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: mongo.appName,
+						replicas: 0,
+					});
+				}
+			} else if (mongo.serverId) {
 				await stopServiceRemote(mongo.serverId, mongo.appName);
 			} else {
 				await stopService(mongo.appName);
@@ -294,18 +322,39 @@ export const mysqlRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const mysql = await findMySqlById(input.mysqlId);
-			if (mysql.serverId) {
-				await stopServiceRemote(mysql.serverId, mysql.appName);
+			if (mysql.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } = mysql.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: mysql.appName,
+						replicas: 0,
+					});
+					await updateMySqlById(input.mysqlId, {
+						applicationStatus: "idle",
+					});
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: mysql.appName,
+						replicas: 1,
+					});
+				}
 			} else {
-				await stopService(mysql.appName);
-			}
-			await updateMySqlById(input.mysqlId, {
-				applicationStatus: "idle",
-			});
-			if (mysql.serverId) {
-				await startServiceRemote(mysql.serverId, mysql.appName);
-			} else {
-				await startService(mysql.appName);
+				if (mysql.serverId) {
+					await stopServiceRemote(mysql.serverId, mysql.appName);
+				} else {
+					await stopService(mysql.appName);
+				}
+				await updateMySqlById(input.mysqlId, {
+					applicationStatus: "idle",
+				});
+				if (mysql.serverId) {
+					await startServiceRemote(mysql.serverId, mysql.appName);
+				} else {
+					await startService(mysql.appName);
+				}
 			}
 			await updateMySqlById(input.mysqlId, {
 				applicationStatus: "done",
@@ -340,8 +389,23 @@ export const mysqlRouter = createTRPCRouter({
 				resourceName: mongo.appName,
 			});
 			const backups = await findBackupsByDbId(input.mysqlId, "mysql");
+			const isKubernetes = mongo.deploymentEngine === "kubernetes";
+			const k8sId = mongo.environment.project.kubernetesId;
+			const k8sNs = mongo.environment.project.kubernetesNamespace;
 			const cleanupOperations = [
-				async () => await removeService(mongo?.appName, mongo.serverId),
+				async () => {
+					if (isKubernetes && k8sId && k8sNs) {
+						await cleanupKubernetesDatabase({
+							kind: "mysql",
+							databaseId: mongo.mysqlId,
+							appName: mongo.appName,
+							namespace: k8sNs,
+							kubernetesId: k8sId,
+						});
+					} else {
+						await removeService(mongo?.appName, mongo.serverId);
+					}
+				},
 				async () => await cancelJobs(backups),
 				async () => await removeMySqlById(input.mysqlId),
 			];

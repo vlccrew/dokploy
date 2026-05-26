@@ -1,5 +1,6 @@
 import {
 	checkPortInUse,
+	cleanupKubernetesDatabase,
 	createMariadb,
 	createMount,
 	deployMariadb,
@@ -16,6 +17,7 @@ import {
 	rebuildDatabase,
 	removeMariadbById,
 	removeService,
+	scaleKubernetesDatabase,
 	startService,
 	startServiceRemote,
 	stopService,
@@ -137,7 +139,23 @@ export const mariadbRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const service = await findMariadbById(input.mariadbId);
-			if (service.serverId) {
+			if (service.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } =
+					service.environment.project;
+				if (!kubernetesId || !kubernetesNamespace) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message:
+							"This database is set to Kubernetes but the project has no cluster/namespace bound. Deploy it once first.",
+					});
+				}
+				await scaleKubernetesDatabase({
+					kubernetesId,
+					namespace: kubernetesNamespace,
+					appName: service.appName,
+					replicas: 1,
+				});
+			} else if (service.serverId) {
 				await startServiceRemote(service.serverId, service.appName);
 			} else {
 				await startService(service.appName);
@@ -162,7 +180,18 @@ export const mariadbRouter = createTRPCRouter({
 			});
 			const mariadb = await findMariadbById(input.mariadbId);
 
-			if (mariadb.serverId) {
+			if (mariadb.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } =
+					mariadb.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: mariadb.appName,
+						replicas: 0,
+					});
+				}
+			} else if (mariadb.serverId) {
 				await stopServiceRemote(mariadb.serverId, mariadb.appName);
 			} else {
 				await stopService(mariadb.appName);
@@ -290,8 +319,23 @@ export const mariadbRouter = createTRPCRouter({
 				resourceName: mongo.appName,
 			});
 			const backups = await findBackupsByDbId(input.mariadbId, "mariadb");
+			const isKubernetes = mongo.deploymentEngine === "kubernetes";
+			const k8sId = mongo.environment.project.kubernetesId;
+			const k8sNs = mongo.environment.project.kubernetesNamespace;
 			const cleanupOperations = [
-				async () => await removeService(mongo?.appName, mongo.serverId),
+				async () => {
+					if (isKubernetes && k8sId && k8sNs) {
+						await cleanupKubernetesDatabase({
+							kind: "mariadb",
+							databaseId: mongo.mariadbId,
+							appName: mongo.appName,
+							namespace: k8sNs,
+							kubernetesId: k8sId,
+						});
+					} else {
+						await removeService(mongo?.appName, mongo.serverId);
+					}
+				},
 				async () => await cancelJobs(backups),
 				async () => await removeMariadbById(input.mariadbId),
 			];
@@ -335,19 +379,41 @@ export const mariadbRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const mariadb = await findMariadbById(input.mariadbId);
-			if (mariadb.serverId) {
-				await stopServiceRemote(mariadb.serverId, mariadb.appName);
+			if (mariadb.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } =
+					mariadb.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: mariadb.appName,
+						replicas: 0,
+					});
+					await updateMariadbById(input.mariadbId, {
+						applicationStatus: "idle",
+					});
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: mariadb.appName,
+						replicas: 1,
+					});
+				}
 			} else {
-				await stopService(mariadb.appName);
-			}
-			await updateMariadbById(input.mariadbId, {
-				applicationStatus: "idle",
-			});
+				if (mariadb.serverId) {
+					await stopServiceRemote(mariadb.serverId, mariadb.appName);
+				} else {
+					await stopService(mariadb.appName);
+				}
+				await updateMariadbById(input.mariadbId, {
+					applicationStatus: "idle",
+				});
 
-			if (mariadb.serverId) {
-				await startServiceRemote(mariadb.serverId, mariadb.appName);
-			} else {
-				await startService(mariadb.appName);
+				if (mariadb.serverId) {
+					await startServiceRemote(mariadb.serverId, mariadb.appName);
+				} else {
+					await startService(mariadb.appName);
+				}
 			}
 			await updateMariadbById(input.mariadbId, {
 				applicationStatus: "done",

@@ -1,5 +1,6 @@
 import {
 	checkPortInUse,
+	cleanupKubernetesDatabase,
 	createMongo,
 	createMount,
 	deployMongo,
@@ -16,6 +17,7 @@ import {
 	rebuildDatabase,
 	removeMongoById,
 	removeService,
+	scaleKubernetesDatabase,
 	startService,
 	startServiceRemote,
 	stopService,
@@ -142,7 +144,23 @@ export const mongoRouter = createTRPCRouter({
 			});
 			const service = await findMongoById(input.mongoId);
 
-			if (service.serverId) {
+			if (service.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } =
+					service.environment.project;
+				if (!kubernetesId || !kubernetesNamespace) {
+					throw new TRPCError({
+						code: "BAD_REQUEST",
+						message:
+							"This database is set to Kubernetes but the project has no cluster/namespace bound. Deploy it once first.",
+					});
+				}
+				await scaleKubernetesDatabase({
+					kubernetesId,
+					namespace: kubernetesNamespace,
+					appName: service.appName,
+					replicas: 1,
+				});
+			} else if (service.serverId) {
 				await startServiceRemote(service.serverId, service.appName);
 			} else {
 				await startService(service.appName);
@@ -167,7 +185,17 @@ export const mongoRouter = createTRPCRouter({
 			});
 			const mongo = await findMongoById(input.mongoId);
 
-			if (mongo.serverId) {
+			if (mongo.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } = mongo.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: mongo.appName,
+						replicas: 0,
+					});
+				}
+			} else if (mongo.serverId) {
 				await stopServiceRemote(mongo.serverId, mongo.appName);
 			} else {
 				await stopService(mongo.appName);
@@ -295,19 +323,40 @@ export const mongoRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const mongo = await findMongoById(input.mongoId);
-			if (mongo.serverId) {
-				await stopServiceRemote(mongo.serverId, mongo.appName);
+			if (mongo.deploymentEngine === "kubernetes") {
+				const { kubernetesId, kubernetesNamespace } = mongo.environment.project;
+				if (kubernetesId && kubernetesNamespace) {
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: mongo.appName,
+						replicas: 0,
+					});
+					await updateMongoById(input.mongoId, {
+						applicationStatus: "idle",
+					});
+					await scaleKubernetesDatabase({
+						kubernetesId,
+						namespace: kubernetesNamespace,
+						appName: mongo.appName,
+						replicas: 1,
+					});
+				}
 			} else {
-				await stopService(mongo.appName);
-			}
-			await updateMongoById(input.mongoId, {
-				applicationStatus: "idle",
-			});
+				if (mongo.serverId) {
+					await stopServiceRemote(mongo.serverId, mongo.appName);
+				} else {
+					await stopService(mongo.appName);
+				}
+				await updateMongoById(input.mongoId, {
+					applicationStatus: "idle",
+				});
 
-			if (mongo.serverId) {
-				await startServiceRemote(mongo.serverId, mongo.appName);
-			} else {
-				await startService(mongo.appName);
+				if (mongo.serverId) {
+					await startServiceRemote(mongo.serverId, mongo.appName);
+				} else {
+					await startService(mongo.appName);
+				}
 			}
 			await updateMongoById(input.mongoId, {
 				applicationStatus: "done",
@@ -344,8 +393,23 @@ export const mongoRouter = createTRPCRouter({
 			});
 			const backups = await findBackupsByDbId(input.mongoId, "mongo");
 
+			const isKubernetes = mongo.deploymentEngine === "kubernetes";
+			const k8sId = mongo.environment.project.kubernetesId;
+			const k8sNs = mongo.environment.project.kubernetesNamespace;
 			const cleanupOperations = [
-				async () => await removeService(mongo?.appName, mongo.serverId),
+				async () => {
+					if (isKubernetes && k8sId && k8sNs) {
+						await cleanupKubernetesDatabase({
+							kind: "mongo",
+							databaseId: mongo.mongoId,
+							appName: mongo.appName,
+							namespace: k8sNs,
+							kubernetesId: k8sId,
+						});
+					} else {
+						await removeService(mongo?.appName, mongo.serverId);
+					}
+				},
 				async () => await cancelJobs(backups),
 				async () => await removeMongoById(input.mongoId),
 			];

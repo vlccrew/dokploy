@@ -12,6 +12,7 @@ import { type ReactElement, useState } from "react";
 import superjson from "superjson";
 import { ShowEnvironment } from "@/components/dashboard/application/environment/show-environment";
 import { ShowDockerLogs } from "@/components/dashboard/application/logs/show";
+import { ShowKubernetesPodLogs } from "@/components/dashboard/application/logs/show-kubernetes";
 import { DeleteService } from "@/components/dashboard/compose/delete-service";
 import { ShowBackups } from "@/components/dashboard/database/backups/show-backups";
 import { ContainerFreeMonitoring } from "@/components/dashboard/monitoring/free/container/show-free-container-monitoring";
@@ -109,17 +110,21 @@ const MySql = (
 								</div>
 								<div className="flex flex-col h-fit w-fit gap-2">
 									<div className="flex flex-row h-fit w-fit gap-2">
-										<Badge
-											variant={
-												!data?.serverId
-													? "default"
-													: data?.server?.serverStatus === "active"
+										{data?.deploymentEngine === "kubernetes" ? (
+											<Badge variant="default">Kubernetes</Badge>
+										) : (
+											<Badge
+												variant={
+													!data?.serverId
 														? "default"
-														: "destructive"
-											}
-										>
-											{data?.server?.name || "Dokploy Server"}
-										</Badge>
+														: data?.server?.serverStatus === "active"
+															? "default"
+															: "destructive"
+												}
+											>
+												{data?.server?.name || "Dokploy Server"}
+											</Badge>
+										)}
 										{data?.server?.serverStatus === "inactive" && (
 											<TooltipProvider delayDuration={0}>
 												<Tooltip>
@@ -262,10 +267,17 @@ const MySql = (
 										{permissions?.logs.read && (
 											<TabsContent value="logs">
 												<div className="flex flex-col gap-4  pt-2.5">
-													<ShowDockerLogs
-														serverId={data?.serverId || ""}
-														appName={data?.appName || ""}
-													/>
+													{data?.deploymentEngine === "kubernetes" ? (
+														<ShowKubernetesPodLogs
+															serviceType="mysql"
+															serviceId={mysqlId}
+														/>
+													) : (
+														<ShowDockerLogs
+															serverId={data?.serverId || ""}
+															appName={data?.appName || ""}
+														/>
+													)}
 												</div>
 											</TabsContent>
 										)}

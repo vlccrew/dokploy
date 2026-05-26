@@ -103,6 +103,7 @@ export * from "./utils/filesystem/directory";
 export * from "./utils/filesystem/ssh";
 export * from "./utils/gpu-setup";
 export * from "./utils/kubernetes/client";
+export * from "./utils/kubernetes/database";
 export * from "./utils/kubernetes/deployment";
 export * from "./utils/kubernetes/errors";
 export * from "./utils/kubernetes/ingress";

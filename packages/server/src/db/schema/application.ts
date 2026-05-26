@@ -29,6 +29,7 @@ import { server } from "./server";
 import {
 	applicationStatus,
 	certificateType,
+	deploymentEngine,
 	type EndpointSpecSwarm,
 	EndpointSpecSwarmSchema,
 	type HealthCheckSwarm,
@@ -68,11 +69,6 @@ export const buildType = pgEnum("buildType", [
 	"nixpacks",
 	"static",
 	"railpack",
-]);
-
-export const deploymentEngine = pgEnum("deploymentEngine", [
-	"docker",
-	"kubernetes",
 ]);
 
 export const applications = pgTable("application", {
