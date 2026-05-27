@@ -10,6 +10,7 @@ import type { ApplicationNested } from "../builders";
 
 export const uploadImageRemoteCommand = async (
 	application: ApplicationNested,
+	imageTag?: string,
 ) => {
 	const registry = application.registry;
 	const buildRegistry = application.buildRegistry;
@@ -25,6 +26,14 @@ export const uploadImageRemoteCommand = async (
 			? application.dockerImage || ""
 			: `${appName}:latest`;
 
+	// For built sources on K8s we also push a unique, deploy-identifying tag
+	// (e.g. short commit SHA) alongside `:latest`. K8s references the unique
+	// tag so rollouts fire on every deploy, and the registry retains prior
+	// versions for rollback. Swarm flows don't pass `imageTag` — behavior
+	// there is unchanged.
+	const extraTag =
+		imageTag && application.sourceType !== "docker" ? imageTag : null;
+
 	const commands: string[] = [];
 	if (registry) {
 		const r = await findRegistryByIdWithCredentials(registry.registryId);
@@ -32,6 +41,14 @@ export const uploadImageRemoteCommand = async (
 		if (registryTag) {
 			commands.push(`echo "📦 [Enabled Registry Swarm]"`);
 			commands.push(getRegistryCommands(r, imageName, registryTag));
+			if (extraTag) {
+				const versionedTag = `${getRegistryTag(r, appName)}:${extraTag}`;
+				commands.push(
+					getRegistryCommands(r, imageName, versionedTag, {
+						skipLogin: true,
+					}),
+				);
+			}
 		}
 	}
 	if (buildRegistry) {
@@ -40,6 +57,14 @@ export const uploadImageRemoteCommand = async (
 		if (buildRegistryTag) {
 			commands.push(`echo "🔑 [Enabled Build Registry]"`);
 			commands.push(getRegistryCommands(r, imageName, buildRegistryTag));
+			if (extraTag) {
+				const versionedTag = `${getRegistryTag(r, appName)}:${extraTag}`;
+				commands.push(
+					getRegistryCommands(r, imageName, versionedTag, {
+						skipLogin: true,
+					}),
+				);
+			}
 			commands.push(
 				`echo "⚠️ INFO: After the build is finished, you need to wait a few seconds for the server to download the image and run the container."`,
 			);
@@ -118,20 +143,23 @@ const getRegistryCommands = (
 	registry: Registry,
 	imageName: string,
 	registryTag: string,
+	opts: { skipLogin?: boolean } = {},
 ): string => {
-	const loginCmd = safeDockerLoginCommand(
-		registry.registryUrl,
-		registry.username,
-		registry.password,
-	);
-	return `
-echo ${quote([`📦 [Enabled Registry] Uploading image to '${registry.registryType}' | '${registryTag}'`])} ;
-${loginCmd} || {
+	const loginBlock = opts.skipLogin
+		? ""
+		: `${safeDockerLoginCommand(
+				registry.registryUrl,
+				registry.username,
+				registry.password,
+			)} || {
 	echo "❌ DockerHub Failed" ;
 	exit 1;
 }
 echo "✅ Registry Login Success" ;
-docker tag ${quote([imageName])} ${quote([registryTag])} || {
+`;
+	return `
+echo ${quote([`📦 [Enabled Registry] Uploading image to '${registry.registryType}' | '${registryTag}'`])} ;
+${loginBlock}docker tag ${quote([imageName])} ${quote([registryTag])} || {
 	echo "❌ Error tagging image" ;
 	exit 1;
 }

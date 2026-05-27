@@ -75,7 +75,10 @@ const assertSafeBuildFields = (application: ApplicationNested) => {
 	}
 };
 
-export const getBuildCommand = async (rawApplication: ApplicationNested) => {
+export const getBuildCommand = async (
+	rawApplication: ApplicationNested,
+	imageTag?: string,
+) => {
 	const application = await withResolvedVaultRefs(rawApplication);
 	let command = "";
 
@@ -109,7 +112,7 @@ export const getBuildCommand = async (rawApplication: ApplicationNested) => {
 		application.buildRegistry ||
 		application.rollbackRegistry
 	) {
-		command += await uploadImageRemoteCommand(application);
+		command += await uploadImageRemoteCommand(application, imageTag);
 	}
 
 	return command;
