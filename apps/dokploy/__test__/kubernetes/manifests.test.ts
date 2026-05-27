@@ -2,10 +2,13 @@ import type { ApplicationNested, Domain } from "@dokploy/server";
 import {
 	buildDeploymentManifest,
 	buildIngressManifest,
+	DEPLOYMENT_ID_ANNOTATION,
 	ENV_CHECKSUM_ANNOTATION,
 	FILES_CHECKSUM_ANNOTATION,
 } from "@dokploy/server";
 import { describe, expect, test } from "vitest";
+
+const TEST_DEPLOYMENT_ID = "deploy-test-0001";
 
 const baseApp: ApplicationNested = {
 	railpackVersion: "0.15.4",
@@ -174,6 +177,7 @@ describe("buildDeploymentManifest", () => {
 			application: baseApp,
 			image: "registry.example.com/test/test-app:latest",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 		});
 
 		expect(deployment.kind).toBe("Deployment");
@@ -196,6 +200,7 @@ describe("buildDeploymentManifest", () => {
 			application: baseApp,
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 			envFromSecretName: "test-app-abc123-env",
 		});
 		const container = deployment.spec?.template.spec?.containers?.[0];
@@ -210,6 +215,7 @@ describe("buildDeploymentManifest", () => {
 			application: baseApp,
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 			envFromSecretName: "test-app-abc123-env",
 			env: { FOO: "bar", BAZ: "1" },
 		});
@@ -217,6 +223,7 @@ describe("buildDeploymentManifest", () => {
 			application: baseApp,
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 			envFromSecretName: "test-app-abc123-env",
 			env: { FOO: "bar", BAZ: "2" },
 		});
@@ -238,12 +245,14 @@ describe("buildDeploymentManifest", () => {
 			application: baseApp,
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 			env: { FOO: "bar", BAZ: "1" },
 		});
 		const b = buildDeploymentManifest({
 			application: baseApp,
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 			env: { BAZ: "1", FOO: "bar" },
 		});
 		expect(
@@ -257,13 +266,42 @@ describe("buildDeploymentManifest", () => {
 		);
 	});
 
-	test("no checksum annotations when env is empty and no file mounts", () => {
+	test("only the deployment-id annotation is set when env is empty and no file mounts", () => {
 		const { deployment } = buildDeploymentManifest({
 			application: baseApp,
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 		});
-		expect(deployment.spec?.template.metadata?.annotations).toBeUndefined();
+		const annotations = deployment.spec?.template.metadata?.annotations;
+		expect(annotations).toEqual({
+			[DEPLOYMENT_ID_ANNOTATION]: TEST_DEPLOYMENT_ID,
+		});
+	});
+
+	test("deployment-id annotation flips between deploys to force a rollout", () => {
+		const a = buildDeploymentManifest({
+			application: baseApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+			deploymentId: "deploy-alpha",
+		});
+		const b = buildDeploymentManifest({
+			application: baseApp,
+			image: "img:1",
+			namespace: "dokploy-test",
+			deploymentId: "deploy-beta",
+		});
+		const idA =
+			a.deployment.spec?.template.metadata?.annotations?.[
+				DEPLOYMENT_ID_ANNOTATION
+			];
+		const idB =
+			b.deployment.spec?.template.metadata?.annotations?.[
+				DEPLOYMENT_ID_ANNOTATION
+			];
+		expect(idA).toBe("deploy-alpha");
+		expect(idB).toBe("deploy-beta");
 	});
 
 	test("files-checksum annotation flips when file mount content changes", () => {
@@ -296,11 +334,13 @@ describe("buildDeploymentManifest", () => {
 			application: makeFileApp("hello v1"),
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 		});
 		const b = buildDeploymentManifest({
 			application: makeFileApp("hello v2"),
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 		});
 		const sumA =
 			a.deployment.spec?.template.metadata?.annotations?.[
@@ -320,6 +360,7 @@ describe("buildDeploymentManifest", () => {
 			application: { ...baseApp, memoryLimit: String(512 * 1024 * 1024) },
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 		});
 		const container = deployment.spec?.template.spec?.containers?.[0];
 		expect(container?.resources?.limits).toEqual({
@@ -357,6 +398,7 @@ describe("buildDeploymentManifest", () => {
 			application: fileApp,
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 		});
 
 		expect(configMaps).toHaveLength(1);
@@ -397,6 +439,7 @@ describe("buildDeploymentManifest", () => {
 			application: volApp,
 			image: "img:1",
 			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
 		});
 		expect(pvcs).toHaveLength(1);
 		expect(pvcs[0]!.spec?.accessModes).toEqual(["ReadWriteOnce"]);

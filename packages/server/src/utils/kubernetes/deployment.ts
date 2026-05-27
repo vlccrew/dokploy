@@ -14,6 +14,7 @@ import { IMAGE_PULL_SECRET_NAME } from "./secrets";
 
 export const ENV_CHECKSUM_ANNOTATION = "dokploy.io/env-checksum";
 export const FILES_CHECKSUM_ANNOTATION = "dokploy.io/files-checksum";
+export const DEPLOYMENT_ID_ANNOTATION = "dokploy.io/deployment-id";
 
 // Pods read `envFrom` Secret/ConfigMap values only at start time, so updating
 // the Secret in place leaves running pods with the old env. Putting a hash of
@@ -179,6 +180,13 @@ export interface DeploymentBuildInput {
 	 * a rolling restart. Pass null/undefined when there are no env vars.
 	 */
 	env?: Record<string, string> | null;
+	/**
+	 * Deployment row id for this deploy. Written as the
+	 * `dokploy.io/deployment-id` pod-template annotation so every deploy
+	 * mutates the pod spec — guarantees a rollout even when the image
+	 * reference is unchanged (e.g. sourceType=docker with a fixed tag).
+	 */
+	deploymentId: string;
 }
 
 export const buildDeploymentManifest = ({
@@ -188,6 +196,7 @@ export const buildDeploymentManifest = ({
 	imagePullSecretName = IMAGE_PULL_SECRET_NAME,
 	envFromSecretName = null,
 	env = null,
+	deploymentId,
 }: DeploymentBuildInput) => {
 	const appName = k8sName(application.appName);
 	const labels = {
@@ -262,10 +271,10 @@ export const buildDeploymentManifest = ({
 	const envChecksum = env && Object.keys(env).length > 0 ? hashEnv(env) : null;
 	const filesChecksum = hashFiles(volumePieces);
 	const annotations = {
+		[DEPLOYMENT_ID_ANNOTATION]: deploymentId,
 		...(envChecksum && { [ENV_CHECKSUM_ANNOTATION]: envChecksum }),
 		...(filesChecksum && { [FILES_CHECKSUM_ANNOTATION]: filesChecksum }),
 	};
-	const hasAnnotations = Object.keys(annotations).length > 0;
 
 	const deployment: V1Deployment = {
 		apiVersion: "apps/v1",
@@ -275,10 +284,7 @@ export const buildDeploymentManifest = ({
 			replicas: application.replicas ?? 1,
 			selector: { matchLabels: { "app.kubernetes.io/name": appName } },
 			template: {
-				metadata: {
-					labels,
-					...(hasAnnotations && { annotations }),
-				},
+				metadata: { labels, annotations },
 				spec: podSpec,
 			},
 		},
@@ -311,6 +317,7 @@ export const applyDeployment = async (
 	application: ApplicationNested,
 	image: string,
 	namespace: string,
+	deploymentId: string,
 	imagePullSecretName: string | null = IMAGE_PULL_SECRET_NAME,
 	envFromSecretName: string | null = null,
 	env: Record<string, string> | null = null,
@@ -322,6 +329,7 @@ export const applyDeployment = async (
 		imagePullSecretName,
 		envFromSecretName,
 		env,
+		deploymentId,
 	});
 
 	for (const pvc of pvcs) {

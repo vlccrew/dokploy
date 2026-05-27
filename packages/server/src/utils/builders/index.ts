@@ -36,7 +36,10 @@ export type ApplicationNested = InferResultType<
 	}
 >;
 
-export const getBuildCommand = async (application: ApplicationNested) => {
+export const getBuildCommand = async (
+	application: ApplicationNested,
+	imageTag?: string,
+) => {
 	let command = "";
 
 	if (application.sourceType !== "docker") {
@@ -68,7 +71,7 @@ export const getBuildCommand = async (application: ApplicationNested) => {
 		application.buildRegistry ||
 		application.rollbackRegistry
 	) {
-		command += await uploadImageRemoteCommand(application);
+		command += await uploadImageRemoteCommand(application, imageTag);
 	}
 
 	return command;
