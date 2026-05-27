@@ -54,6 +54,30 @@ import {
 } from "./preview-deployment";
 import { validUniqueServerAppName } from "./project";
 
+// Resolve a unique, deploy-identifying image tag for K8s built sources so the
+// registry retains every build (enables rollback by tag) and K8s sees an image
+// reference change between deploys. Git sources use the short commit SHA;
+// `drop` falls back to a short deployment-id slug. Returns undefined when no
+// extra tag should be pushed (sourceType=docker or non-K8s engines — callers
+// gate on those before invoking this helper).
+const resolveK8sImageTag = async (
+	application: { sourceType: string; appName: string },
+	deploymentId: string,
+	serverId: string | null,
+): Promise<string | undefined> => {
+	if (application.sourceType === "docker") return undefined;
+	if (application.sourceType === "drop") {
+		return `dep-${deploymentId.slice(0, 8)}`;
+	}
+	const info = await getGitCommitInfo({
+		appName: application.appName,
+		type: "application",
+		serverId,
+	});
+	const sha = info?.hash?.slice(0, 7);
+	return sha || `dep-${deploymentId.slice(0, 8)}`;
+};
+
 const writeBanner = async (logPath: string, title: string) => {
 	const bar = "═".repeat(60);
 	try {
@@ -203,6 +227,7 @@ export const deployApplication = async ({
 		description: descriptionLog,
 	});
 
+	let imageTag: string | undefined;
 	try {
 		// For Kubernetes + sourceType=docker, skip the entire local build/push
 		// pipeline — the cluster pulls the public image directly via the
@@ -236,13 +261,28 @@ export const deployApplication = async ({
 				});
 			}
 
-			command += await getBuildCommand(application);
-
-			const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
+			// Run clone + apply-patches first so the commit SHA is on disk
+			// before we resolve the per-deploy image tag for K8s.
+			const setupCommandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
 			if (serverId) {
-				await execAsyncRemote(serverId, commandWithLog);
+				await execAsyncRemote(serverId, setupCommandWithLog);
 			} else {
-				await execAsync(commandWithLog);
+				await execAsync(setupCommandWithLog);
+			}
+
+			if (application.deploymentEngine === "kubernetes") {
+				imageTag = await resolveK8sImageTag(
+					application,
+					deployment.deploymentId,
+					serverId,
+				);
+			}
+
+			const buildCommandWithLog = `(set -e; ${await getBuildCommand(application, imageTag)}) >> ${deployment.logPath} 2>&1`;
+			if (serverId) {
+				await execAsyncRemote(serverId, buildCommandWithLog);
+			} else {
+				await execAsync(buildCommandWithLog);
 			}
 		}
 
@@ -250,6 +290,8 @@ export const deployApplication = async ({
 			await writeBanner(deployment.logPath, "KUBE APPLY");
 			await orchestrateKubernetesDeploy({
 				application,
+				deploymentId: deployment.deploymentId,
+				imageTag,
 				logPath: deployment.logPath,
 			});
 		} else {
@@ -335,15 +377,25 @@ export const rebuildApplication = async ({
 		description: descriptionLog,
 	});
 
+	let imageTag: string | undefined;
 	try {
 		const skipBuildForK8sDocker =
 			application.deploymentEngine === "kubernetes" &&
 			application.sourceType === "docker";
 
 		if (!skipBuildForK8sDocker) {
+			if (application.deploymentEngine === "kubernetes") {
+				// Rebuild reuses the existing on-disk checkout, so the SHA is
+				// whatever the last clone produced — fine for rollout invalidation.
+				imageTag = await resolveK8sImageTag(
+					application,
+					deployment.deploymentId,
+					serverId,
+				);
+			}
 			await writeBanner(deployment.logPath, "BUILD (rebuild)");
 			let command = "set -e;";
-			command += await getBuildCommand(application);
+			command += await getBuildCommand(application, imageTag);
 			const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
 			if (serverId) {
 				await execAsyncRemote(serverId, commandWithLog);
@@ -355,6 +407,8 @@ export const rebuildApplication = async ({
 			await writeBanner(deployment.logPath, "KUBE APPLY");
 			await orchestrateKubernetesDeploy({
 				application,
+				deploymentId: deployment.deploymentId,
+				imageTag,
 				logPath: deployment.logPath,
 			});
 		} else {

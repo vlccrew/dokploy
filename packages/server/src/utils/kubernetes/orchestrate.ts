@@ -46,9 +46,17 @@ export type ApplicationForK8s = InferResultType<
 
 export const orchestrateKubernetesDeploy = async ({
 	application,
+	deploymentId,
+	imageTag,
 	logPath,
 }: {
 	application: ApplicationForK8s;
+	/** Deployment row id; written as a pod-template annotation so every deploy
+	 * mutates the pod spec and triggers a rollout. */
+	deploymentId: string;
+	/** Per-build tag (e.g. short git SHA) appended to the registry image
+	 * reference for built sources. Ignored when `sourceType === "docker"`. */
+	imageTag?: string;
 	logPath?: string;
 }): Promise<void> => {
 	const log = makeLogger(logPath);
@@ -129,9 +137,10 @@ export const orchestrateKubernetesDeploy = async ({
 		await log("ℹ️  No env vars — skipping env Secret");
 	}
 
+	const tag = imageTag ?? "latest";
 	const image = isPrebuiltImage
 		? application.dockerImage!
-		: getRegistryTag(application.registry!, `${application.appName}:latest`);
+		: `${getRegistryTag(application.registry!, application.appName)}:${tag}`;
 	await log(`🐳 Image: ${image}`);
 
 	const { appName } = await applyDeployment(
@@ -139,6 +148,7 @@ export const orchestrateKubernetesDeploy = async ({
 		application,
 		image,
 		namespace,
+		deploymentId,
 		imagePullSecretName,
 		envSecretName,
 		envObj,
