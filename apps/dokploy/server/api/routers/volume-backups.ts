@@ -54,7 +54,15 @@ export const volumeBackupsRouter = createTRPCRouter({
 			return await db.query.volumeBackups.findMany({
 				where: eq(volumeBackups[`${input.volumeBackupType}Id`], input.id),
 				with: {
-					application: true,
+					application: {
+						columns: {
+							appName: true,
+							serverId: true,
+							applicationStatus: true,
+							name: true,
+							environmentId: true,
+						},
+					},
 					postgres: true,
 					mysql: true,
 					mariadb: true,

@@ -13,7 +13,15 @@ export const initVolumeBackupsCronJobs = async () => {
 		const volumeBackupsResult = await db.query.volumeBackups.findMany({
 			where: eq(volumeBackups.enabled, true),
 			with: {
-				application: true,
+				application: {
+					columns: {
+						appName: true,
+						serverId: true,
+						applicationStatus: true,
+						name: true,
+						environmentId: true,
+					},
+				},
 				compose: true,
 			},
 		});

@@ -39,6 +39,13 @@ export const findScheduleById = async (scheduleId: string) => {
 		where: eq(schedules.scheduleId, scheduleId),
 		with: {
 			application: {
+				columns: {
+					appName: true,
+					serverId: true,
+					applicationStatus: true,
+					name: true,
+					environmentId: true,
+				},
 				with: {
 					environment: {
 						with: {
