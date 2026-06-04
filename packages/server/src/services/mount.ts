@@ -108,8 +108,15 @@ export const createFileMount = async (mountId: string) => {
 export const findMountById = async (mountId: string) => {
 	const mount = await db.query.mounts.findFirst({
 		where: eq(mounts.mountId, mountId),
+		// Only select the few nested columns the callers actually read
+		// (serverId, appName, and environment.project.organizationId). Selecting
+		// every column made Drizzle build a json_build_array() per relation that
+		// exceeded Postgres' hard limit of 100 function arguments once the
+		// `application` table crossed 100 columns. See getServerId /
+		// getBaseFilesPath / findMountOrganizationId below.
 		with: {
 			application: {
+				columns: { serverId: true, appName: true },
 				with: {
 					environment: {
 						with: {
@@ -119,6 +126,7 @@ export const findMountById = async (mountId: string) => {
 				},
 			},
 			compose: {
+				columns: { serverId: true, appName: true },
 				with: {
 					environment: {
 						with: {
@@ -128,6 +136,7 @@ export const findMountById = async (mountId: string) => {
 				},
 			},
 			libsql: {
+				columns: { serverId: true, appName: true },
 				with: {
 					environment: {
 						with: {
@@ -137,6 +146,7 @@ export const findMountById = async (mountId: string) => {
 				},
 			},
 			mariadb: {
+				columns: { serverId: true, appName: true },
 				with: {
 					environment: {
 						with: {
@@ -146,6 +156,7 @@ export const findMountById = async (mountId: string) => {
 				},
 			},
 			mongo: {
+				columns: { serverId: true, appName: true },
 				with: {
 					environment: {
 						with: {
@@ -155,6 +166,7 @@ export const findMountById = async (mountId: string) => {
 				},
 			},
 			mysql: {
+				columns: { serverId: true, appName: true },
 				with: {
 					environment: {
 						with: {
@@ -164,6 +176,7 @@ export const findMountById = async (mountId: string) => {
 				},
 			},
 			postgres: {
+				columns: { serverId: true, appName: true },
 				with: {
 					environment: {
 						with: {
@@ -173,6 +186,7 @@ export const findMountById = async (mountId: string) => {
 				},
 			},
 			redis: {
+				columns: { serverId: true, appName: true },
 				with: {
 					environment: {
 						with: {

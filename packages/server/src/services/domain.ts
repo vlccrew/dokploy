@@ -79,8 +79,29 @@ export const generateWildcardDomain = (
 export const findDomainById = async (domainId: string) => {
 	const domain = await db.query.domains.findFirst({
 		where: eq(domains.domainId, domainId),
+		// Only select a small set of application columns. Selecting every column
+		// made Drizzle build a json_build_array() for the nested relation that
+		// exceeded Postgres' hard limit of 100 function arguments once the
+		// `application` table crossed 100 columns. No consumer reads the domain's
+		// nested `.application` directly — they use top-level `domain.applicationId`
+		// and re-fetch via findApplicationById when an application is needed — so
+		// this identity/status subset is intentionally conservative.
 		with: {
-			application: true,
+			application: {
+				columns: {
+					applicationId: true,
+					name: true,
+					appName: true,
+					description: true,
+					env: true,
+					enabled: true,
+					sourceType: true,
+					applicationStatus: true,
+					buildType: true,
+					environmentId: true,
+					serverId: true,
+				},
+			},
 		},
 	});
 	if (!domain) {
@@ -95,8 +116,25 @@ export const findDomainById = async (domainId: string) => {
 export const findDomainsByApplicationId = async (applicationId: string) => {
 	const domainsArray = await db.query.domains.findMany({
 		where: eq(domains.applicationId, applicationId),
+		// See findDomainById above: a nested `application: true` blows past
+		// Postgres' 100-argument json_build_array limit. No consumer reads this
+		// nested `.application`, so a small identity/status subset suffices.
 		with: {
-			application: true,
+			application: {
+				columns: {
+					applicationId: true,
+					name: true,
+					appName: true,
+					description: true,
+					env: true,
+					enabled: true,
+					sourceType: true,
+					applicationStatus: true,
+					buildType: true,
+					environmentId: true,
+					serverId: true,
+				},
+			},
 		},
 	});
 

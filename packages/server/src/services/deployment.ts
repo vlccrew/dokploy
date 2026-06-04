@@ -83,7 +83,16 @@ export const findDeploymentById = async (deploymentId: string) => {
 	const deployment = await db.query.deployments.findFirst({
 		where: eq(deployments.deploymentId, deploymentId),
 		with: {
-			application: true,
+			// Only select the handful of nested application columns callers read.
+			// Selecting every column made Drizzle build a json_build_array() for
+			// the application relation that exceeded Postgres' hard limit of 100
+			// function arguments once the `application` table crossed 100 columns.
+			// Consumers (rollbacks service, deployment/rollback routers) only read
+			// the deployment's top-level columns (applicationId, pid, schedule…)
+			// and re-fetch the full application via findApplicationById.
+			application: {
+				columns: { applicationId: true, appName: true, serverId: true },
+			},
 			schedule: true,
 		},
 	});

@@ -86,13 +86,17 @@ export const findRollbackById = async (rollbackId: string) => {
 		with: {
 			deployment: {
 				with: {
+					// Only select the nested application columns callers might read.
+					// Selecting every column made Drizzle build a json_build_array()
+					// that exceeded Postgres' hard limit of 100 function arguments
+					// once the `application` table crossed 100 columns. Consumers of
+					// findRollbackById only read deployment.applicationId (a column on
+					// the deployment table), never deployment.application.* fields.
 					application: {
-						with: {
-							environment: {
-								with: {
-									project: true,
-								},
-							},
+						columns: {
+							applicationId: true,
+							serverId: true,
+							appName: true,
 						},
 					},
 				},

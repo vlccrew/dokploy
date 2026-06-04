@@ -29,14 +29,13 @@ export const finPortById = async (portId: string) => {
 	const result = await db.query.ports.findFirst({
 		where: eq(ports.portId, portId),
 		with: {
+			// Only select the nested application columns the callers actually read
+			// (application.applicationId for permission checks). Selecting every
+			// column made Drizzle build a json_build_array() that exceeded
+			// Postgres' hard limit of 100 function arguments once the
+			// `application` table crossed 100 columns.
 			application: {
-				with: {
-					environment: {
-						with: {
-							project: true,
-						},
-					},
-				},
+				columns: { applicationId: true },
 			},
 		},
 	});
