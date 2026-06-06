@@ -13,8 +13,10 @@ export interface IngressContext {
 	tlsIssuerName?: string | null;
 }
 
-const ingressName = (appName: string, uniqueKey: number | null | undefined) =>
-	k8sName(`${appName}-${uniqueKey ?? "default"}`);
+export const ingressName = (
+	appName: string,
+	uniqueKey: number | null | undefined,
+) => k8sName(`${appName}-${uniqueKey ?? "default"}`);
 
 const annotationsForApp = (
 	application: ApplicationNested,
@@ -189,6 +191,62 @@ export const manageIngress = async (
 			throw err;
 		}
 	}
+};
+
+/**
+ * Given the app's current domains and the Ingress names that currently exist in
+ * the cluster for this app, return the names that are orphaned and should be
+ * deleted.
+ *
+ * Ingress names embed the domain's `uniqueConfigKey`, a Postgres `serial`.
+ * Deleting + recreating a domain (or editing one in a way that replaces the row)
+ * yields a new key and therefore a new Ingress name, leaving the old Ingress
+ * behind. Because the old and new Ingress share the same host + path, nginx's
+ * admission webhook rejects the new one ("host ... and path ... is already
+ * defined in ingress ..."). Pruning the orphans clears that collision.
+ */
+export const staleIngressNames = (
+	appName: string,
+	domains: Pick<Domain, "uniqueConfigKey">[],
+	existingNames: string[],
+): string[] => {
+	const slug = k8sName(appName);
+	const desired = new Set(
+		domains.map((d) => ingressName(slug, d.uniqueConfigKey)),
+	);
+	return existingNames.filter((name) => !desired.has(name));
+};
+
+/**
+ * Delete every Ingress owned by the app (matched by the `app.kubernetes.io/name`
+ * label) that no longer maps to a current domain. Returns the names removed.
+ * 404s are ignored; any other delete error propagates so the caller can decide.
+ */
+export const pruneStaleIngresses = async (
+	client: KubernetesClient,
+	appName: string,
+	domains: Pick<Domain, "uniqueConfigKey">[],
+	namespace: string,
+): Promise<string[]> => {
+	const slug = k8sName(appName);
+	const list = await client.networking.listNamespacedIngress({
+		namespace,
+		labelSelector: `app.kubernetes.io/name=${slug}`,
+	});
+	const existing = (list.items ?? [])
+		.map((ing) => ing.metadata?.name)
+		.filter((n): n is string => Boolean(n));
+	const stale = staleIngressNames(appName, domains, existing);
+	const removed: string[] = [];
+	for (const name of stale) {
+		try {
+			await client.networking.deleteNamespacedIngress({ name, namespace });
+			removed.push(name);
+		} catch (err) {
+			if (!isHttpError(err) || err.code !== 404) throw err;
+		}
+	}
+	return removed;
 };
 
 export const removeIngress = async (
