@@ -13,6 +13,7 @@ import {
 } from "./deployment";
 import { isHttpError } from "./errors";
 import { manageIngress } from "./ingress";
+import { detectExposedPorts } from "./inspect";
 import { deleteNamespace, ensureNamespace } from "./namespace";
 import { applyEnvSecret, applyImagePullSecret } from "./secrets";
 import { applyService, deleteService } from "./service";
@@ -143,6 +144,25 @@ export const orchestrateKubernetesDeploy = async ({
 		: `${getRegistryTag(application.registry!, application.appName)}:${tag}`;
 	await log(`🐳 Image: ${image}`);
 
+	// For built sources, read the image's EXPOSE'd port(s) off the build host so
+	// the Service can target them instead of the hardcoded 3000 fallback when the
+	// app has no explicit ports/domains. Prebuilt `docker` images aren't pulled
+	// locally, so there's nothing to inspect — they keep the 3000 fallback.
+	let fallbackPorts: number[] = [];
+	if (!isPrebuiltImage) {
+		const buildServerId =
+			application.buildServerId || application.serverId || null;
+		fallbackPorts = await detectExposedPorts(
+			`${application.appName}:latest`,
+			buildServerId,
+		);
+		if (fallbackPorts.length) {
+			await log(
+				`🔎 Detected exposed port(s): ${fallbackPorts.join(", ")} (Service fallback)`,
+			);
+		}
+	}
+
 	const { appName } = await applyDeployment(
 		client,
 		application,
@@ -157,7 +177,7 @@ export const orchestrateKubernetesDeploy = async ({
 		`✅ Deployment '${appName}' applied (replicas: ${application.replicas})`,
 	);
 
-	await applyService(client, application, namespace);
+	await applyService(client, application, namespace, fallbackPorts);
 	await log(`✅ Service '${appName}' applied`);
 
 	for (const domain of application.domains ?? []) {

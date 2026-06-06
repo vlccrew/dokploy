@@ -2,6 +2,7 @@ import type { ApplicationNested, Domain } from "@dokploy/server";
 import {
 	buildDeploymentManifest,
 	buildIngressManifest,
+	buildServiceManifest,
 	DEPLOYMENT_ID_ANNOTATION,
 	ENV_CHECKSUM_ANNOTATION,
 	FILES_CHECKSUM_ANNOTATION,
@@ -515,5 +516,60 @@ describe("buildIngressManifest", () => {
 		expect(
 			ing.metadata.annotations["nginx.ingress.kubernetes.io/rewrite-target"],
 		).toBe("/api$1");
+	});
+});
+
+describe("buildServiceManifest", () => {
+	type ServiceApp = Parameters<typeof buildServiceManifest>[0];
+	const asServiceApp = (app: object) => app as unknown as ServiceApp;
+
+	const portsOf = (manifest: ReturnType<typeof buildServiceManifest>) =>
+		manifest.spec.ports.map((p) => p.port).sort((a, b) => a - b);
+
+	const withPort = (targetPort: number) =>
+		({ targetPort }) as unknown as ApplicationNested["ports"][number];
+
+	test("explicit application ports win over fallbackPorts", () => {
+		const app = asServiceApp({ ...baseApp, ports: [withPort(5000)] });
+		const svc = buildServiceManifest(app, "dokploy-test", [8080]);
+		expect(portsOf(svc)).toEqual([5000]);
+	});
+
+	test("domain ports win over fallbackPorts", () => {
+		const app = asServiceApp({
+			...baseApp,
+			domains: [{ ...baseDomain, port: 4000 }],
+		});
+		const svc = buildServiceManifest(app, "dokploy-test", [8080]);
+		expect(portsOf(svc)).toEqual([4000]);
+	});
+
+	test("fallbackPorts are used when no ports and no domains are configured", () => {
+		const svc = buildServiceManifest(
+			asServiceApp(baseApp),
+			"dokploy-test",
+			[8080],
+		);
+		expect(portsOf(svc)).toEqual([8080]);
+		expect(svc.spec.ports[0]).toMatchObject({ targetPort: 8080 });
+	});
+
+	test("multiple fallbackPorts are all exposed", () => {
+		const svc = buildServiceManifest(
+			asServiceApp(baseApp),
+			"dokploy-test",
+			[80, 443],
+		);
+		expect(portsOf(svc)).toEqual([80, 443]);
+	});
+
+	test("falls back to 3000 when nothing is configured or detected", () => {
+		expect(
+			portsOf(buildServiceManifest(asServiceApp(baseApp), "dokploy-test", [])),
+		).toEqual([3000]);
+		// default arg omitted entirely
+		expect(
+			portsOf(buildServiceManifest(asServiceApp(baseApp), "dokploy-test")),
+		).toEqual([3000]);
 	});
 });
