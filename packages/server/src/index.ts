@@ -107,6 +107,7 @@ export * from "./utils/kubernetes/database";
 export * from "./utils/kubernetes/deployment";
 export * from "./utils/kubernetes/errors";
 export * from "./utils/kubernetes/ingress";
+export * from "./utils/kubernetes/inspect";
 export * from "./utils/kubernetes/namespace";
 export * from "./utils/kubernetes/orchestrate";
 export * from "./utils/kubernetes/secrets";

@@ -10,6 +10,12 @@ export interface ApplicationWithDomains extends ApplicationNested {
 export const buildServiceManifest = (
 	application: ApplicationWithDomains,
 	namespace: string,
+	/**
+	 * Ports to fall back to when the application has no explicit `ports` and no
+	 * domains with a port — typically the image's `EXPOSE`d port(s) detected via
+	 * `docker inspect`. Falls through to `3000` only when this is empty too.
+	 */
+	fallbackPorts: number[] = [],
 ) => {
 	const appName = k8sName(application.appName);
 	const labels = { "app.kubernetes.io/name": appName };
@@ -17,6 +23,9 @@ export const buildServiceManifest = (
 	for (const p of application.ports) containerPorts.add(p.targetPort);
 	for (const d of application.domains) {
 		if (d.port) containerPorts.add(d.port);
+	}
+	if (containerPorts.size === 0) {
+		for (const p of fallbackPorts) containerPorts.add(p);
 	}
 	if (containerPorts.size === 0) containerPorts.add(3000);
 
@@ -47,8 +56,9 @@ export const applyService = async (
 	client: KubernetesClient,
 	application: ApplicationWithDomains,
 	namespace: string,
+	fallbackPorts: number[] = [],
 ): Promise<void> => {
-	const body = buildServiceManifest(application, namespace);
+	const body = buildServiceManifest(application, namespace, fallbackPorts);
 	const name = body.metadata.name;
 	try {
 		const existing = await client.core.readNamespacedService({
