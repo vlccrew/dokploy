@@ -12,7 +12,7 @@ import {
 	waitForRollout,
 } from "./deployment";
 import { isHttpError } from "./errors";
-import { manageIngress } from "./ingress";
+import { manageIngress, pruneStaleIngresses, removeIngress } from "./ingress";
 import { detectExposedPorts } from "./inspect";
 import { deleteNamespace, ensureNamespace } from "./namespace";
 import { applyEnvSecret, applyImagePullSecret } from "./secrets";
@@ -180,7 +180,32 @@ export const orchestrateKubernetesDeploy = async ({
 	await applyService(client, application, namespace, fallbackPorts);
 	await log(`✅ Service '${appName}' applied`);
 
-	for (const domain of application.domains ?? []) {
+	const domains = application.domains ?? [];
+
+	// Garbage-collect Ingresses that no longer map to a current domain *before*
+	// applying the current ones. An Ingress name embeds the domain's serial
+	// `uniqueConfigKey`, so deleting + recreating a domain orphans the old
+	// Ingress; since it still claims the same host + path, nginx's admission
+	// webhook would reject the new Ingress ("host ... is already defined in
+	// ingress ..."). Pruning first clears that collision. Best-effort — never
+	// fail a deploy over cleanup.
+	try {
+		const removed = await pruneStaleIngresses(
+			client,
+			application.appName,
+			domains,
+			namespace,
+		);
+		for (const name of removed) {
+			await log(`🧹 Removed stale Ingress '${name}'`);
+		}
+	} catch (err) {
+		await log(
+			`⚠️  Stale-Ingress cleanup skipped: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+
+	for (const domain of domains) {
 		await manageIngress(client, application, domain, namespace, {
 			ingressClassName: cluster.ingressClassName,
 			tlsIssuerName: cluster.tlsIssuerName,
@@ -189,7 +214,7 @@ export const orchestrateKubernetesDeploy = async ({
 			`✅ Ingress for '${domain.host}${domain.path ?? "/"}' (port ${domain.port ?? 3000}) applied`,
 		);
 	}
-	if ((application.domains ?? []).length === 0) {
+	if (domains.length === 0) {
 		await log("ℹ️  No domains attached — skipping Ingress");
 	}
 
@@ -359,6 +384,38 @@ export const cleanupKubernetesProject = async (input: {
 	try {
 		const client = await getKubernetesClient(input.kubernetesId);
 		await deleteNamespace(client, input.namespace);
+		return { ok: true };
+	} catch (err) {
+		return {
+			ok: false,
+			error: err instanceof Error ? err.message : String(err),
+		};
+	}
+};
+
+/**
+ * Delete the single Ingress backing one domain. Called when a domain is removed
+ * outside of a deploy so the orphaned Ingress doesn't linger until the next
+ * deploy's reconciliation prunes it (and, in the meantime, collide with a
+ * re-created domain at nginx's admission webhook).
+ *
+ * Best-effort: returns ok=false instead of throwing — domain deletion has
+ * already removed the DB row by the time this runs.
+ */
+export const removeKubernetesIngress = async (input: {
+	kubernetesId: string;
+	appName: string;
+	uniqueConfigKey: number;
+	namespace: string;
+}): Promise<{ ok: boolean; error?: string }> => {
+	try {
+		const client = await getKubernetesClient(input.kubernetesId);
+		await removeIngress(
+			client,
+			input.appName,
+			input.uniqueConfigKey,
+			input.namespace,
+		);
 		return { ok: true };
 	} catch (err) {
 		return {

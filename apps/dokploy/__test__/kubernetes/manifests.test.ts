@@ -6,6 +6,8 @@ import {
 	DEPLOYMENT_ID_ANNOTATION,
 	ENV_CHECKSUM_ANNOTATION,
 	FILES_CHECKSUM_ANNOTATION,
+	ingressName,
+	staleIngressNames,
 } from "@dokploy/server";
 import { describe, expect, test } from "vitest";
 
@@ -516,6 +518,37 @@ describe("buildIngressManifest", () => {
 		expect(
 			ing.metadata.annotations["nginx.ingress.kubernetes.io/rewrite-target"],
 		).toBe("/api$1");
+	});
+});
+
+describe("staleIngressNames", () => {
+	const appName = "test-app-abc123";
+
+	test("returns Ingresses whose uniqueConfigKey has no backing domain", () => {
+		// Current domain is key 4; key 3 was deleted + recreated, orphaning its
+		// Ingress. The orphan is what collides at nginx's admission webhook.
+		const existing = [ingressName(appName, 3), ingressName(appName, 4)];
+		const stale = staleIngressNames(
+			appName,
+			[{ uniqueConfigKey: 4 }],
+			existing,
+		);
+		expect(stale).toEqual([ingressName(appName, 3)]);
+	});
+
+	test("keeps every Ingress that maps to a current domain", () => {
+		const existing = [ingressName(appName, 1), ingressName(appName, 2)];
+		const stale = staleIngressNames(
+			appName,
+			[{ uniqueConfigKey: 1 }, { uniqueConfigKey: 2 }],
+			existing,
+		);
+		expect(stale).toEqual([]);
+	});
+
+	test("with no domains, every existing Ingress is stale", () => {
+		const existing = [ingressName(appName, 1), ingressName(appName, 7)];
+		expect(staleIngressNames(appName, [], existing)).toEqual(existing);
 	});
 });
 
