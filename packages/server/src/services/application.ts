@@ -449,6 +449,14 @@ export const deployPreviewApplication = async ({
 }) => {
 	const application = await findApplicationById(applicationId);
 
+	if (application.deploymentEngine === "kubernetes") {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				"Preview deployments are not supported on the Kubernetes engine yet.",
+		});
+	}
+
 	const deployment = await createDeploymentPreview({
 		title: titleLog,
 		description: descriptionLog,
@@ -568,6 +576,15 @@ export const rebuildPreviewApplication = async ({
 	previewDeploymentId: string;
 }) => {
 	const application = await findApplicationById(applicationId);
+
+	if (application.deploymentEngine === "kubernetes") {
+		throw new TRPCError({
+			code: "BAD_REQUEST",
+			message:
+				"Preview deployments are not supported on the Kubernetes engine yet.",
+		});
+	}
+
 	const previewDeployment =
 		await findPreviewDeploymentById(previewDeploymentId);
 
