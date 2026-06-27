@@ -392,6 +392,69 @@ export const applyDeployment = async (
 	return { appName };
 };
 
+// Annotation `kubectl rollout restart` writes to force a rolling restart. Using
+// the same key keeps our restart indistinguishable from a manual kubectl one.
+export const RESTARTED_AT_ANNOTATION = "kubectl.kubernetes.io/restartedAt";
+
+/**
+ * Restart a Deployment's pods in place without rebuilding the image — the
+ * Kubernetes equivalent of Docker's `service.update({ ForceUpdate })` reload.
+ *
+ * Stamps a fresh timestamp annotation on the pod template (exactly what
+ * `kubectl rollout restart` does), which mutates the pod spec and triggers a
+ * rolling restart. Read-then-replace mirrors how `applyDeployment` updates.
+ */
+export const rolloutRestartDeployment = async (
+	client: KubernetesClient,
+	appName: string,
+	namespace: string,
+	restartedAt: string = new Date().toISOString(),
+): Promise<void> => {
+	const deployment = await client.apps.readNamespacedDeployment({
+		name: appName,
+		namespace,
+	});
+	if (!deployment.spec?.template) {
+		throw new Error(`Deployment '${appName}' has no pod template to restart`);
+	}
+	deployment.spec.template.metadata = deployment.spec.template.metadata ?? {};
+	deployment.spec.template.metadata.annotations = {
+		...(deployment.spec.template.metadata.annotations ?? {}),
+		[RESTARTED_AT_ANNOTATION]: restartedAt,
+	};
+	await client.apps.replaceNamespacedDeployment({
+		name: appName,
+		namespace,
+		body: deployment,
+	});
+};
+
+/**
+ * Set a Deployment's replica count — the Kubernetes equivalent of Docker's
+ * `docker service scale <app>=<n>`. Used by start (scale up to the desired
+ * replicas) and stop (scale to 0). Read-then-replace mirrors `applyDeployment`.
+ */
+export const scaleDeployment = async (
+	client: KubernetesClient,
+	appName: string,
+	namespace: string,
+	replicas: number,
+): Promise<void> => {
+	const deployment = await client.apps.readNamespacedDeployment({
+		name: appName,
+		namespace,
+	});
+	if (!deployment.spec) {
+		throw new Error(`Deployment '${appName}' has no spec to scale`);
+	}
+	deployment.spec.replicas = replicas;
+	await client.apps.replaceNamespacedDeployment({
+		name: appName,
+		namespace,
+		body: deployment,
+	});
+};
+
 export const deleteDeployment = async (
 	client: KubernetesClient,
 	appName: string,

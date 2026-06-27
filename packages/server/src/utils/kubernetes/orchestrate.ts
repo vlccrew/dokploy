@@ -9,6 +9,8 @@ import {
 	applyDeployment,
 	deleteDeployment,
 	k8sName,
+	rolloutRestartDeployment,
+	scaleDeployment,
 	waitForRollout,
 } from "./deployment";
 import { isHttpError } from "./errors";
@@ -227,6 +229,122 @@ export const orchestrateKubernetesDeploy = async ({
 		throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: msg });
 	}
 	await log("🎉 Rollout complete");
+};
+
+/**
+ * Restart an application's pods on Kubernetes without rebuilding — the engine's
+ * equivalent of Docker's reload (`mechanizeDockerContainer`). Stamps a fresh
+ * `restartedAt` annotation on the Deployment's pod template to trigger a rolling
+ * restart, then waits for the rollout to settle.
+ */
+export const restartKubernetesApplication = async ({
+	application,
+	logPath,
+}: {
+	application: ApplicationForK8s;
+	logPath?: string;
+}): Promise<void> => {
+	const log = makeLogger(logPath);
+	await log("🔄 Restarting Kubernetes application");
+
+	const kubernetesId = application.environment.project.kubernetesId;
+	if (!kubernetesId) {
+		const msg =
+			"Kubernetes engine selected but the project has no Kubernetes cluster bound. Set one on the project first.";
+		await log(`❌ ${msg}`);
+		throw new TRPCError({ code: "BAD_REQUEST", message: msg });
+	}
+
+	const cluster = await findKubernetesClusterById(kubernetesId);
+	const client = await getKubernetesClient(kubernetesId);
+
+	const namespace = await ensureNamespace(
+		client,
+		{
+			projectId: application.environment.project.projectId,
+			name: application.environment.project.name,
+			kubernetesNamespace:
+				application.environment.project.kubernetesNamespace ?? null,
+		},
+		cluster.defaultNamespacePrefix,
+	);
+
+	const appName = k8sName(application.appName);
+	try {
+		await rolloutRestartDeployment(client, appName, namespace);
+	} catch (err) {
+		if (isHttpError(err) && err.code === 404) {
+			const msg = `No Kubernetes Deployment '${appName}' found in namespace '${namespace}' — deploy the application before reloading.`;
+			await log(`❌ ${msg}`);
+			throw new TRPCError({ code: "BAD_REQUEST", message: msg });
+		}
+		throw err;
+	}
+	await log(`✅ Triggered rollout restart of '${appName}'`);
+
+	await log(`⏳ Waiting for rollout of '${appName}' (timeout 5m)...`);
+	const rollout = await waitForRollout(client, appName, namespace);
+	if (!rollout.ready) {
+		const msg =
+			rollout.message ?? "Kubernetes rollout did not complete in time.";
+		await log(`❌ ${msg}`);
+		throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: msg });
+	}
+	await log("🎉 Restart complete");
+};
+
+/**
+ * Scale an application's Deployment to a replica count on Kubernetes — the
+ * engine's equivalent of Docker's `docker service scale`. `stop` passes 0;
+ * `start` passes the application's desired replicas. Does not wait for the
+ * pods to settle (matches the fire-and-forget Docker stop/start behavior).
+ */
+export const scaleKubernetesApplication = async ({
+	application,
+	replicas,
+	logPath,
+}: {
+	application: ApplicationForK8s;
+	replicas: number;
+	logPath?: string;
+}): Promise<void> => {
+	const log = makeLogger(logPath);
+	await log(`📐 Scaling Kubernetes application to ${replicas} replica(s)`);
+
+	const kubernetesId = application.environment.project.kubernetesId;
+	if (!kubernetesId) {
+		const msg =
+			"Kubernetes engine selected but the project has no Kubernetes cluster bound. Set one on the project first.";
+		await log(`❌ ${msg}`);
+		throw new TRPCError({ code: "BAD_REQUEST", message: msg });
+	}
+
+	const cluster = await findKubernetesClusterById(kubernetesId);
+	const client = await getKubernetesClient(kubernetesId);
+
+	const namespace = await ensureNamespace(
+		client,
+		{
+			projectId: application.environment.project.projectId,
+			name: application.environment.project.name,
+			kubernetesNamespace:
+				application.environment.project.kubernetesNamespace ?? null,
+		},
+		cluster.defaultNamespacePrefix,
+	);
+
+	const appName = k8sName(application.appName);
+	try {
+		await scaleDeployment(client, appName, namespace, replicas);
+	} catch (err) {
+		if (isHttpError(err) && err.code === 404) {
+			const msg = `No Kubernetes Deployment '${appName}' found in namespace '${namespace}' — deploy the application first.`;
+			await log(`❌ ${msg}`);
+			throw new TRPCError({ code: "BAD_REQUEST", message: msg });
+		}
+		throw err;
+	}
+	await log(`✅ Scaled '${appName}' to ${replicas} replica(s)`);
 };
 
 /**

@@ -19,6 +19,8 @@ import {
 	removeMonitoringDirectory,
 	removeService,
 	removeTraefikConfig,
+	restartKubernetesApplication,
+	scaleKubernetesApplication,
 	startService,
 	startServiceRemote,
 	stopService,
@@ -199,7 +201,11 @@ export const applicationRouter = createTRPCRouter({
 
 			try {
 				await updateApplicationStatus(input.applicationId, "idle");
-				await mechanizeDockerContainer(application);
+				if (application.deploymentEngine === "kubernetes") {
+					await restartKubernetesApplication({ application });
+				} else {
+					await mechanizeDockerContainer(application);
+				}
 				await updateApplicationStatus(input.applicationId, "done");
 				await audit(ctx, {
 					action: "reload",
@@ -298,7 +304,12 @@ export const applicationRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const service = await findApplicationById(input.applicationId);
-			if (service.serverId) {
+			if (service.deploymentEngine === "kubernetes") {
+				await scaleKubernetesApplication({
+					application: service,
+					replicas: 0,
+				});
+			} else if (service.serverId) {
 				await stopServiceRemote(service.serverId, service.appName);
 			} else {
 				await stopService(service.appName);
@@ -320,7 +331,12 @@ export const applicationRouter = createTRPCRouter({
 				deployment: ["create"],
 			});
 			const service = await findApplicationById(input.applicationId);
-			if (service.serverId) {
+			if (service.deploymentEngine === "kubernetes") {
+				await scaleKubernetesApplication({
+					application: service,
+					replicas: service.replicas ?? 1,
+				});
+			} else if (service.serverId) {
 				await startServiceRemote(service.serverId, service.appName);
 			} else {
 				await startService(service.appName);
