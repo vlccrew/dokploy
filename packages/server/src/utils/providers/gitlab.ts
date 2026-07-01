@@ -152,6 +152,13 @@ export const cloneGitlabRepository = async ({
 	const repoClone = getGitlabRepoClone(gitlab, gitlabPathNamespace);
 	const cloneUrl = getGitlabCloneUrl(gitlab, repoClone);
 	command += `echo "Cloning Repo ${repoClone} to ${outputPath}: ✅";`;
+	if (enableSubmodules) {
+		const gitlabBaseUrl = gitlab?.gitlabInternalUrl || gitlab?.gitlabUrl || "";
+		const isSecure = gitlabBaseUrl.startsWith("https://");
+		const protocol = `http${isSecure ? "s" : ""}`;
+		const host = gitlabBaseUrl.replace(/^https?:\/\//, "");
+		command += `git config --global "url.${protocol}://oauth2:${gitlab.accessToken}@${host}/.insteadOf" "${protocol}://${host}/";`;
+	}
 	command += `git clone --branch ${gitlabBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
 	return command;
 };
