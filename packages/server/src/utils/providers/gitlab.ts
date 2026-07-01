@@ -152,17 +152,15 @@ export const cloneGitlabRepository = async ({
 	const repoClone = getGitlabRepoClone(gitlab, gitlabPathNamespace);
 	const cloneUrl = getGitlabCloneUrl(gitlab, repoClone);
 	command += `echo "Cloning Repo ${repoClone} to ${outputPath}: ✅";`;
-	let cloneCmd: string;
 	if (enableSubmodules) {
 		const gitlabBaseUrl = gitlab?.gitlabInternalUrl || gitlab?.gitlabUrl || "";
 		const isSecure = gitlabBaseUrl.startsWith("https://");
 		const protocol = `http${isSecure ? "s" : ""}`;
 		const host = gitlabBaseUrl.replace(/^https?:\/\//, "");
-		cloneCmd = `git -c 'url.${protocol}://oauth2:${gitlab.accessToken}@${host}/.insteadOf=${protocol}://${host}/' clone --branch ${gitlabBranch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
+		command += `git -c 'url.${protocol}://oauth2:${gitlab.accessToken}@${host}/.insteadOf=${protocol}://${host}/' clone --branch ${gitlabBranch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
 	} else {
-		cloneCmd = `git clone --branch ${gitlabBranch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
+		command += `git clone --branch ${gitlabBranch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
 	}
-	command += cloneCmd;
 	return command;
 };
 

@@ -125,16 +125,14 @@ export const cloneBitbucketRepository = async ({
 	const repoclone = `bitbucket.org/${bitbucketOwner}/${repoToUse}.git`;
 	const cloneUrl = getBitbucketCloneUrl(bitbucket, repoclone);
 	command += `echo "Cloning Repo ${repoclone} to ${outputPath}: ✅";`;
-	let cloneCmd: string;
 	if (enableSubmodules) {
 		const credPrefix = bitbucket.apiToken
 			? `x-bitbucket-api-token-auth:${bitbucket.apiToken}`
 			: `${bitbucket.bitbucketUsername}:${bitbucket.appPassword}`;
-		cloneCmd = `git -c 'url.https://${credPrefix}@bitbucket.org/.insteadOf=https://bitbucket.org/' clone --branch ${bitbucketBranch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
+		command += `git -c 'url.https://${credPrefix}@bitbucket.org/.insteadOf=https://bitbucket.org/' clone --branch ${bitbucketBranch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
 	} else {
-		cloneCmd = `git clone --branch ${bitbucketBranch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
+		command += `git clone --branch ${bitbucketBranch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
 	}
-	command += cloneCmd;
 	return command;
 };
 
