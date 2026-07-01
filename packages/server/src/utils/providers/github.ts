@@ -167,6 +167,9 @@ export const cloneGithubRepository = async ({
 	const cloneUrl = `https://oauth2:${token}@${repoclone}`;
 
 	command += `echo "Cloning Repo ${repoclone} to ${outputPath}: ✅";`;
+	if (enableSubmodules) {
+		command += `git config --global "url.https://oauth2:${token}@github.com/.insteadOf" "https://github.com/";`;
+	}
 	command += `git clone --branch ${branch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
 
 	return command;
