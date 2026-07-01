@@ -129,9 +129,10 @@ export const cloneBitbucketRepository = async ({
 		const credPrefix = bitbucket.apiToken
 			? `x-bitbucket-api-token-auth:${bitbucket.apiToken}`
 			: `${bitbucket.bitbucketUsername}:${bitbucket.appPassword}`;
-		command += `git config --global "url.https://${credPrefix}@bitbucket.org/.insteadOf" "https://bitbucket.org/";`;
+		command += `git -c 'url.https://${credPrefix}@bitbucket.org/.insteadOf=https://bitbucket.org/' clone --branch ${bitbucketBranch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
+	} else {
+		command += `git clone --branch ${bitbucketBranch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
 	}
-	command += `git clone --branch ${bitbucketBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
 	return command;
 };
 

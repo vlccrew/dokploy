@@ -168,9 +168,10 @@ export const cloneGithubRepository = async ({
 
 	command += `echo "Cloning Repo ${repoclone} to ${outputPath}: ✅";`;
 	if (enableSubmodules) {
-		command += `git config --global "url.https://oauth2:${token}@github.com/.insteadOf" "https://github.com/";`;
+		command += `git -c 'url.https://oauth2:${token}@github.com/.insteadOf=https://github.com/' clone --branch ${branch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
+	} else {
+		command += `git clone --branch ${branch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
 	}
-	command += `git clone --branch ${branch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
 
 	return command;
 };
