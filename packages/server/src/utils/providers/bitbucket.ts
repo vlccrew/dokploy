@@ -125,6 +125,12 @@ export const cloneBitbucketRepository = async ({
 	const repoclone = `bitbucket.org/${bitbucketOwner}/${repoToUse}.git`;
 	const cloneUrl = getBitbucketCloneUrl(bitbucket, repoclone);
 	command += `echo "Cloning Repo ${repoclone} to ${outputPath}: ✅";`;
+	if (enableSubmodules) {
+		const credPrefix = bitbucket.apiToken
+			? `x-bitbucket-api-token-auth:${bitbucket.apiToken}`
+			: `${bitbucket.bitbucketUsername}:${bitbucket.appPassword}`;
+		command += `git config --global "url.https://${credPrefix}@bitbucket.org/.insteadOf" "https://bitbucket.org/";`;
+	}
 	command += `git clone --branch ${bitbucketBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
 	return command;
 };
