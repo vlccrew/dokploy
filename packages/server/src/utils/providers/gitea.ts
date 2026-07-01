@@ -177,16 +177,14 @@ export const cloneGiteaRepository = async ({
 	);
 
 	command += `echo "Cloning Repo ${repoClone} to ${outputPath}: ✅";`;
-	let cloneCmd: string;
 	if (enableSubmodules) {
 		const giteaBaseUrl = giteaProvider.giteaInternalUrl || giteaProvider.giteaUrl;
 		const protocol = giteaBaseUrl.startsWith("http://") ? "http" : "https";
 		const host = giteaBaseUrl.replace(/^https?:\/\//, "");
-		cloneCmd = `git -c 'url.${protocol}://oauth2:${giteaProvider.accessToken}@${host}/.insteadOf=${protocol}://${host}/' clone --branch ${giteaBranch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
+		command += `git -c 'url.${protocol}://oauth2:${giteaProvider.accessToken}@${host}/.insteadOf=${protocol}://${host}/' clone --branch ${giteaBranch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
 	} else {
-		cloneCmd = `git clone --branch ${giteaBranch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
+		command += `git clone --branch ${giteaBranch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
 	}
-	command += cloneCmd;
 	return command;
 };
 
