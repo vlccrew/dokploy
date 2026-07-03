@@ -157,9 +157,10 @@ export const cloneGitlabRepository = async ({
 		const isSecure = gitlabBaseUrl.startsWith("https://");
 		const protocol = `http${isSecure ? "s" : ""}`;
 		const host = gitlabBaseUrl.replace(/^https?:\/\//, "");
-		command += `git config --global "url.${protocol}://oauth2:${gitlab.accessToken}@${host}/.insteadOf" "${protocol}://${host}/";`;
+		command += `git -c 'url.${protocol}://oauth2:${gitlab.accessToken}@${host}/.insteadOf=${protocol}://${host}/' clone --branch ${gitlabBranch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
+	} else {
+		command += `git clone --branch ${gitlabBranch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
 	}
-	command += `git clone --branch ${gitlabBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
 	return command;
 };
 

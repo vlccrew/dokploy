@@ -181,9 +181,10 @@ export const cloneGiteaRepository = async ({
 		const giteaBaseUrl = giteaProvider.giteaInternalUrl || giteaProvider.giteaUrl;
 		const protocol = giteaBaseUrl.startsWith("http://") ? "http" : "https";
 		const host = giteaBaseUrl.replace(/^https?:\/\//, "");
-		command += `git config --global "url.${protocol}://oauth2:${giteaProvider.accessToken}@${host}/.insteadOf" "${protocol}://${host}/";`;
+		command += `git -c 'url.${protocol}://oauth2:${giteaProvider.accessToken}@${host}/.insteadOf=${protocol}://${host}/' clone --branch ${giteaBranch} --depth 1 --recurse-submodules ${cloneUrl} ${outputPath} --progress;`;
+	} else {
+		command += `git clone --branch ${giteaBranch} --depth 1 ${cloneUrl} ${outputPath} --progress;`;
 	}
-	command += `git clone --branch ${giteaBranch} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${cloneUrl} ${outputPath} --progress;`;
 	return command;
 };
 
