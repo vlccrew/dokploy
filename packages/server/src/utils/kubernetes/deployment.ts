@@ -212,6 +212,11 @@ export const buildDeploymentManifest = ({
 		...(subPath && { subPath }),
 	}));
 	const volumes = volumePieces.map(({ name, volume }) => ({ name, ...volume }));
+	// `volume` mounts are RWO PVCs, attachable by one node at a time. Under the
+	// default RollingUpdate, a new pod scheduled on another node hangs in
+	// ContainerCreating until the rollout times out, so tear the old pod down
+	// first — same reason the database Deployments use Recreate.
+	const hasRwoVolume = application.mounts.some((m) => m.type === "volume");
 
 	const cpuLimit = parseCpu(application.cpuLimit);
 	const memoryLimit = parseMemory(application.memoryLimit);
@@ -282,6 +287,7 @@ export const buildDeploymentManifest = ({
 		metadata: { name: appName, namespace, labels },
 		spec: {
 			replicas: application.replicas ?? 1,
+			...(hasRwoVolume && { strategy: { type: "Recreate" } }),
 			selector: { matchLabels: { "app.kubernetes.io/name": appName } },
 			template: {
 				metadata: { labels, annotations },
