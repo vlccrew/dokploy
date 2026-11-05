@@ -196,6 +196,8 @@ describe("buildDeploymentManifest", () => {
 		]);
 		expect(configMaps).toHaveLength(0);
 		expect(pvcs).toHaveLength(0);
+		// No RWO volume: keep the default RollingUpdate.
+		expect(deployment.spec?.strategy).toBeUndefined();
 	});
 
 	test("uses envFrom secretRef when envFromSecretName is set", () => {
@@ -411,9 +413,11 @@ describe("buildDeploymentManifest", () => {
 		const mount = container?.volumeMounts?.[0];
 		expect(mount?.mountPath).toBe("/etc/welcome.conf");
 		expect(mount?.subPath).toBe("welcome.conf");
+		// ConfigMap mounts can be shared across nodes, so rolling stays safe.
+		expect(deployment.spec?.strategy).toBeUndefined();
 	});
 
-	test("volume mount: emits a 1Gi RWO PVC labeled with the app slug", () => {
+	test("volume mount: emits a 1Gi RWO PVC labeled with the app slug and uses Recreate", () => {
 		const volApp = {
 			...baseApp,
 			mounts: [
@@ -452,6 +456,8 @@ describe("buildDeploymentManifest", () => {
 		const container = deployment.spec?.template.spec?.containers?.[0];
 		expect(container?.volumeMounts?.[0]?.mountPath).toBe("/data");
 		expect(container?.volumeMounts?.[0]?.subPath).toBeUndefined();
+		// RWO PVC: the old pod must release it before the new one can attach.
+		expect(deployment.spec?.strategy).toEqual({ type: "Recreate" });
 	});
 });
 
