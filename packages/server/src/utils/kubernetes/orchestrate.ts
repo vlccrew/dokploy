@@ -1,6 +1,7 @@
 import { appendFile } from "node:fs/promises";
 import { TRPCError } from "@trpc/server";
 import { findKubernetesClusterById } from "../../services/kubernetes";
+import { findRegistryByIdWithCredentials } from "../../services/registry";
 import type { InferResultType } from "../../types/with";
 import { getRegistryTag } from "../cluster/upload";
 import { getEnvironmentVariablesObject } from "../docker/utils";
@@ -38,9 +39,9 @@ export type ApplicationForK8s = InferResultType<
 		security: true;
 		redirects: true;
 		ports: true;
-		registry: true;
-		buildRegistry: true;
-		rollbackRegistry: true;
+		registry: { columns: { password: false } };
+		buildRegistry: { columns: { password: false } };
+		rollbackRegistry: { columns: { password: false } };
 		deployments: true;
 		domains: true;
 		environment: { with: { project: true } };
@@ -109,12 +110,16 @@ export const orchestrateKubernetesDeploy = async ({
 	);
 	await log(`✅ Namespace '${namespace}' ready`);
 
+	const registry = application.registry
+		? await findRegistryByIdWithCredentials(application.registry.registryId)
+		: null;
+
 	let imagePullSecretName: string | null = null;
-	if (application.registry) {
+	if (registry) {
 		imagePullSecretName = await applyImagePullSecret(
 			client,
 			namespace,
-			application.registry,
+			registry,
 		);
 		await log(`✅ Image-pull secret '${imagePullSecretName}' applied`);
 	} else {
@@ -143,7 +148,7 @@ export const orchestrateKubernetesDeploy = async ({
 	const tag = imageTag ?? "latest";
 	const image = isPrebuiltImage
 		? application.dockerImage!
-		: `${getRegistryTag(application.registry!, application.appName)}:${tag}`;
+		: `${getRegistryTag(registry!, application.appName)}:${tag}`;
 	await log(`🐳 Image: ${image}`);
 
 	// For built sources, read the image's EXPOSE'd port(s) off the build host so
@@ -182,7 +187,10 @@ export const orchestrateKubernetesDeploy = async ({
 	await applyService(client, application, namespace, fallbackPorts);
 	await log(`✅ Service '${appName}' applied`);
 
-	const domains = application.domains ?? [];
+	// Disabled domains keep their config but must not be exposed (mirrors the
+	// Traefik path); leaving them out also lets the prune below remove their
+	// Ingresses.
+	const domains = (application.domains ?? []).filter((d) => d.enabled);
 
 	// Garbage-collect Ingresses that no longer map to a current domain *before*
 	// applying the current ones. An Ingress name embeds the domain's serial

@@ -172,6 +172,8 @@ const baseDomain: Domain = {
 	internalPath: "/",
 	stripPath: false,
 	middlewares: null,
+	enabled: true,
+	forwardAuthEnabled: false,
 };
 
 describe("buildDeploymentManifest", () => {
@@ -508,7 +510,7 @@ describe("buildIngressManifest", () => {
 			context: { ingressClassName: "nginx", tlsIssuerName: null },
 		});
 		const tls = (ing.spec as { tls?: { secretName: string }[] }).tls;
-		expect(tls?.[0]!.secretName).toMatch(/-tls$/);
+		expect(tls?.[0]?.secretName).toMatch(/-tls$/);
 		expect(
 			ing.metadata.annotations["cert-manager.io/cluster-issuer"],
 		).toBeUndefined();
