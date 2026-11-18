@@ -126,7 +126,13 @@ export const cloneBitbucketRepository = async ({
 	const repoclone = `bitbucket.org/${bitbucketOwner}/${repoToUse}.git`;
 	const cloneUrl = getBitbucketCloneUrl(bitbucket, repoclone);
 	command += `echo ${quote([`Cloning Repo ${repoclone} to ${outputPath}: ✅`])};`;
-	command += `git clone --branch ${quote([String(bitbucketBranch ?? "")])} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${quote([String(cloneUrl ?? "")])} ${quote([String(outputPath ?? "")])} --progress;`;
+	// Bitbucket auth lives in the clone URL, which submodules don't inherit, so
+	// rewrite bitbucket.org submodule URLs to the credentialed form. `-c` (not
+	// `git config --global`) keeps the token out of the host's git config.
+	const submoduleAuth = enableSubmodules
+		? `-c ${quote([`url.${getBitbucketCloneUrl(bitbucket, "bitbucket.org/")}.insteadOf=https://bitbucket.org/`])} `
+		: "";
+	command += `git ${submoduleAuth}clone --branch ${quote([String(bitbucketBranch ?? "")])} --depth 1 ${enableSubmodules ? "--recurse-submodules" : ""} ${quote([String(cloneUrl ?? "")])} ${quote([String(outputPath ?? "")])} --progress;`;
 	return command;
 };
 
