@@ -271,28 +271,30 @@ export const deployApplication = async ({
 				});
 			}
 
-			// Run clone + apply-patches first so the commit SHA is on disk
-			// before we resolve the per-deploy image tag for K8s.
-			const setupCommandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
-			if (serverId) {
-				await execAsyncRemote(serverId, setupCommandWithLog);
-			} else {
-				await execAsync(setupCommandWithLog);
-			}
-
 			if (application.deploymentEngine === "kubernetes") {
+				// Run clone + apply-patches first so the commit SHA is on disk
+				// before we resolve the per-deploy image tag.
+				const setupCommandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
+				if (serverId) {
+					await execAsyncRemote(serverId, setupCommandWithLog);
+				} else {
+					await execAsync(setupCommandWithLog);
+				}
 				imageTag = await resolveK8sImageTag(
 					application,
 					deployment.deploymentId,
 					serverId,
 				);
+				command = `set -e;${await getBuildCommand(application, imageTag)}`;
+			} else {
+				command += await getBuildCommand(application);
 			}
 
-			const buildCommandWithLog = `(set -e; ${await getBuildCommand(application, imageTag)}) >> ${deployment.logPath} 2>&1`;
+			const commandWithLog = `(${command}) >> ${deployment.logPath} 2>&1`;
 			if (serverId) {
-				await execAsyncRemote(serverId, buildCommandWithLog);
+				await execAsyncRemote(serverId, commandWithLog);
 			} else {
-				await execAsync(buildCommandWithLog);
+				await execAsync(commandWithLog);
 			}
 		}
 
