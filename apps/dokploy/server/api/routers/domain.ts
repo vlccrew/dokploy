@@ -13,7 +13,7 @@ import {
 	manageDomain,
 	removeDomain,
 	removeDomainById,
-	removeKubernetesIngress,
+	removeKubernetesDomainRoutes,
 	updateDomainById,
 	validateDomain,
 } from "@dokploy/server";
@@ -270,13 +270,14 @@ export const domainRouter = createTRPCRouter({
 			if (domain.applicationId) {
 				const application = await findApplicationById(domain.applicationId);
 				if (application.deploymentEngine === "kubernetes") {
-					// Kubernetes apps have no Traefik config; delete the Ingress now so
-					// it doesn't linger until the next deploy's reconciliation (and
-					// collide with a re-created domain at nginx's admission webhook).
+					// Kubernetes apps have no Traefik config; delete the Ingress and
+					// HTTPRoute now so they don't linger until the next deploy's
+					// reconciliation (and collide with a re-created domain at nginx's
+					// admission webhook).
 					const ns = application.environment.project.kubernetesNamespace;
 					const kid = application.environment.project.kubernetesId;
 					if (ns && kid) {
-						await removeKubernetesIngress({
+						await removeKubernetesDomainRoutes({
 							kubernetesId: kid,
 							appName: application.appName,
 							uniqueConfigKey: domain.uniqueConfigKey,

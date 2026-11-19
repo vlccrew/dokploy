@@ -1429,6 +1429,13 @@
       "when": 1794999646231,
       "tag": "0203_kubernetes_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 204,
+      "version": "7",
+      "when": 1795101949640,
+      "tag": "0204_kubernetes_gateway_routing",
+      "breakpoints": true
     }
   ]
 }

@@ -98,6 +98,9 @@ export interface KubernetesConnectionTest {
 	nodes?: number;
 	ingressClassPresent?: boolean;
 	certManagerPresent?: boolean;
+	/** Only set when a Gateway was named. "ready" means its controller has
+	 * programmed it. */
+	gateway?: "ready" | "not-ready" | "missing";
 	error?: string;
 }
 
@@ -105,6 +108,7 @@ export const testKubernetesConnection = async (params: {
 	kubeconfig: string;
 	context?: string | null;
 	ingressClassName?: string | null;
+	gateway?: { name: string; namespace: string } | null;
 }): Promise<KubernetesConnectionTest> => {
 	try {
 		const kc = buildKubeConfigFromString(params.kubeconfig, params.context);
@@ -138,6 +142,28 @@ export const testKubernetesConnection = async (params: {
 			}
 		}
 
+		let gateway: KubernetesConnectionTest["gateway"];
+		if (params.gateway) {
+			try {
+				const gw: {
+					status?: { conditions?: { type: string; status: string }[] };
+				} = await client.custom.getNamespacedCustomObject({
+					group: "gateway.networking.k8s.io",
+					version: "v1",
+					plural: "gateways",
+					namespace: params.gateway.namespace,
+					name: params.gateway.name,
+				});
+				const programmed = (gw.status?.conditions ?? []).some(
+					(c) => c.type === "Programmed" && c.status === "True",
+				);
+				gateway = programmed ? "ready" : "not-ready";
+			} catch (err) {
+				if (!isHttpError(err) || err.code !== 404) throw err;
+				gateway = "missing";
+			}
+		}
+
 		return {
 			ok: true,
 			serverVersion: versionInfo.gitVersion,
@@ -145,6 +171,7 @@ export const testKubernetesConnection = async (params: {
 			nodes: nodes.items?.length ?? 0,
 			ingressClassPresent,
 			certManagerPresent,
+			gateway,
 		};
 	} catch (err) {
 		return {

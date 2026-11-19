@@ -1,6 +1,7 @@
 import {
 	AppsV1Api,
 	CoreV1Api,
+	CustomObjectsApi,
 	Exec,
 	KubeConfig,
 	Log,
@@ -16,6 +17,7 @@ export interface KubernetesClient {
 	kubeConfig: KubeConfig;
 	core: CoreV1Api;
 	apps: AppsV1Api;
+	custom: CustomObjectsApi;
 	networking: NetworkingV1Api;
 	policy: PolicyV1Api;
 	version: VersionApi;
@@ -37,6 +39,7 @@ export const buildKubernetesClient = (
 	kubeConfig,
 	core: kubeConfig.makeApiClient(CoreV1Api),
 	apps: kubeConfig.makeApiClient(AppsV1Api),
+	custom: kubeConfig.makeApiClient(CustomObjectsApi),
 	networking: kubeConfig.makeApiClient(NetworkingV1Api),
 	policy: kubeConfig.makeApiClient(PolicyV1Api),
 	version: kubeConfig.makeApiClient(VersionApi),

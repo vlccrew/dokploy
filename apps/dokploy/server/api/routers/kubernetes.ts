@@ -68,6 +68,10 @@ export const kubernetesRouter = createTRPCRouter({
 			let kubeconfig = input.kubeconfig;
 			let context = input.context ?? null;
 			let ingressClassName: string | null = null;
+			let gateway =
+				input.gatewayName && input.gatewayNamespace
+					? { name: input.gatewayName, namespace: input.gatewayNamespace }
+					: null;
 			if (input.kubernetesId) {
 				const cluster = await findKubernetesClusterById(input.kubernetesId);
 				if (cluster.organizationId !== ctx.session.activeOrganizationId) {
@@ -76,6 +80,16 @@ export const kubernetesRouter = createTRPCRouter({
 				kubeconfig = cluster.kubeconfig;
 				context = cluster.context ?? null;
 				ingressClassName = cluster.ingressClassName;
+				if (
+					cluster.routingMode !== "ingress" &&
+					cluster.gatewayName &&
+					cluster.gatewayNamespace
+				) {
+					gateway = {
+						name: cluster.gatewayName,
+						namespace: cluster.gatewayNamespace,
+					};
+				}
 			}
 			if (!kubeconfig) {
 				throw new TRPCError({
@@ -87,6 +101,7 @@ export const kubernetesRouter = createTRPCRouter({
 				kubeconfig,
 				context,
 				ingressClassName,
+				gateway,
 			});
 		}),
 });

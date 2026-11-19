@@ -27,16 +27,32 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/utils/api";
 
-const formSchema = z.object({
-	name: z.string().min(1, "Name is required"),
-	description: z.string().optional(),
-	kubeconfig: z.string().min(1, "kubeconfig is required"),
-	context: z.string().optional(),
-	defaultNamespacePrefix: z.string().optional(),
-	ingressClassName: z.string().optional(),
-	tlsIssuerName: z.string().optional(),
-	defaultRegistryId: z.string().optional(),
-});
+const formSchema = z
+	.object({
+		name: z.string().min(1, "Name is required"),
+		description: z.string().optional(),
+		kubeconfig: z.string().min(1, "kubeconfig is required"),
+		context: z.string().optional(),
+		defaultNamespacePrefix: z.string().optional(),
+		routingMode: z.enum(["ingress", "gateway", "both"]),
+		ingressClassName: z.string().optional(),
+		tlsIssuerName: z.string().optional(),
+		gatewayName: z.string().optional(),
+		gatewayNamespace: z.string().optional(),
+		defaultRegistryId: z.string().optional(),
+	})
+	.superRefine((values, ctx) => {
+		if (values.routingMode === "ingress") return;
+		for (const field of ["gatewayName", "gatewayNamespace"] as const) {
+			if (!values[field]) {
+				ctx.addIssue({
+					code: z.ZodIssueCode.custom,
+					path: [field],
+					message: "Required when routing through a Gateway",
+				});
+			}
+		}
+	});
 
 type FormValues = z.infer<typeof formSchema>;
 
@@ -70,11 +86,15 @@ export const HandleKubernetes = ({ kubernetesId }: Props) => {
 			kubeconfig: "",
 			context: "",
 			defaultNamespacePrefix: "dokploy",
+			routingMode: "ingress",
 			ingressClassName: "nginx",
 			tlsIssuerName: "",
+			gatewayName: "",
+			gatewayNamespace: "",
 			defaultRegistryId: "",
 		},
 	});
+	const routingMode = form.watch("routingMode");
 
 	useEffect(() => {
 		if (existing) {
@@ -84,8 +104,11 @@ export const HandleKubernetes = ({ kubernetesId }: Props) => {
 				kubeconfig: existing.kubeconfig,
 				context: existing.context ?? "",
 				defaultNamespacePrefix: existing.defaultNamespacePrefix,
+				routingMode: existing.routingMode,
 				ingressClassName: existing.ingressClassName,
 				tlsIssuerName: existing.tlsIssuerName ?? "",
+				gatewayName: existing.gatewayName ?? "",
+				gatewayNamespace: existing.gatewayNamespace ?? "",
 				defaultRegistryId: existing.defaultRegistryId ?? "",
 			});
 		}
@@ -96,6 +119,8 @@ export const HandleKubernetes = ({ kubernetesId }: Props) => {
 			...values,
 			defaultRegistryId: values.defaultRegistryId || null,
 			tlsIssuerName: values.tlsIssuerName || null,
+			gatewayName: values.gatewayName || null,
+			gatewayNamespace: values.gatewayNamespace || null,
 			context: values.context || null,
 		};
 		try {
@@ -126,9 +151,12 @@ export const HandleKubernetes = ({ kubernetesId }: Props) => {
 		setTesting(true);
 		setTestResult(null);
 		try {
+			const usesGateway = values.routingMode !== "ingress";
 			const result = await test.mutateAsync({
 				kubeconfig: values.kubeconfig,
 				context: values.context || undefined,
+				gatewayName: usesGateway ? values.gatewayName : undefined,
+				gatewayNamespace: usesGateway ? values.gatewayNamespace : undefined,
 			});
 			if (result.ok) {
 				const lines = [
@@ -137,6 +165,17 @@ export const HandleKubernetes = ({ kubernetesId }: Props) => {
 					`Ingress class present: ${result.ingressClassPresent ? "yes" : "no"}`,
 					`cert-manager: ${result.certManagerPresent ? "yes" : "no"}`,
 				];
+				if (result.gateway) {
+					lines.push(
+						`Gateway: ${
+							{
+								ready: "ready",
+								"not-ready": "found, not programmed by its controller yet",
+								missing: "not found",
+							}[result.gateway]
+						}`,
+					);
+				}
 				setTestResult(lines.join("\n"));
 				toast.success("Connection successful");
 			} else {
@@ -171,9 +210,9 @@ export const HandleKubernetes = ({ kubernetesId }: Props) => {
 						{kubernetesId ? "Edit Cluster" : "Add Kubernetes Cluster"}
 					</DialogTitle>
 					<DialogDescription>
-						Register a Kubernetes cluster by pasting its kubeconfig.
-						nginx-ingress and (optionally) cert-manager must be installed in the
-						cluster.
+						Register a Kubernetes cluster by pasting its kubeconfig. Domains are
+						served through nginx-ingress (with cert-manager for TLS) or through
+						an existing Gateway API Gateway such as kgateway.
 					</DialogDescription>
 				</DialogHeader>
 				<Form {...form}>
@@ -252,33 +291,99 @@ export const HandleKubernetes = ({ kubernetesId }: Props) => {
 									</FormItem>
 								)}
 							/>
-							<FormField
-								control={form.control}
-								name="ingressClassName"
-								render={({ field }) => (
-									<FormItem>
-										<FormLabel>Ingress class</FormLabel>
-										<FormControl>
-											<Input {...field} />
-										</FormControl>
-									</FormItem>
-								)}
-							/>
-							<FormField
-								control={form.control}
-								name="tlsIssuerName"
-								render={({ field }) => (
-									<FormItem>
-										<FormLabel>cert-manager ClusterIssuer</FormLabel>
-										<FormControl>
-											<Input placeholder="letsencrypt-prod" {...field} />
-										</FormControl>
-										<FormDescription>
-											Required if any domain uses Let's Encrypt.
-										</FormDescription>
-									</FormItem>
-								)}
-							/>
+						</div>
+						<FormField
+							control={form.control}
+							name="routingMode"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel>Domain routing</FormLabel>
+									<FormControl>
+										<select
+											{...field}
+											className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+										>
+											<option value="ingress">Ingress</option>
+											<option value="gateway">Gateway API (HTTPRoute)</option>
+											<option value="both">Both, while moving DNS</option>
+										</select>
+									</FormControl>
+									<FormDescription>
+										With a Gateway, TLS comes from its listeners, so every
+										domain needs a listener whose hostname covers it. "Both"
+										serves each domain through an Ingress and an HTTPRoute so
+										DNS can move between them; switch to Gateway API afterwards
+										and redeploy to remove the Ingresses.
+									</FormDescription>
+								</FormItem>
+							)}
+						/>
+						<div className="grid grid-cols-2 gap-3">
+							{routingMode !== "gateway" && (
+								<>
+									<FormField
+										control={form.control}
+										name="ingressClassName"
+										render={({ field }) => (
+											<FormItem>
+												<FormLabel>Ingress class</FormLabel>
+												<FormControl>
+													<Input {...field} />
+												</FormControl>
+											</FormItem>
+										)}
+									/>
+									<FormField
+										control={form.control}
+										name="tlsIssuerName"
+										render={({ field }) => (
+											<FormItem>
+												<FormLabel>cert-manager ClusterIssuer</FormLabel>
+												<FormControl>
+													<Input placeholder="letsencrypt-prod" {...field} />
+												</FormControl>
+												<FormDescription>
+													Required if any domain uses Let's Encrypt.
+												</FormDescription>
+											</FormItem>
+										)}
+									/>
+								</>
+							)}
+							{routingMode !== "ingress" && (
+								<>
+									<FormField
+										control={form.control}
+										name="gatewayName"
+										render={({ field }) => (
+											<FormItem>
+												<FormLabel>Gateway name</FormLabel>
+												<FormControl>
+													<Input placeholder="certu-gateway" {...field} />
+												</FormControl>
+												<FormMessage />
+											</FormItem>
+										)}
+									/>
+									<FormField
+										control={form.control}
+										name="gatewayNamespace"
+										render={({ field }) => (
+											<FormItem>
+												<FormLabel>Gateway namespace</FormLabel>
+												<FormControl>
+													<Input placeholder="kgateway-system" {...field} />
+												</FormControl>
+												<FormDescription>
+													Its HTTPS listeners must allow routes from other
+													namespaces.
+												</FormDescription>
+												<FormMessage />
+											</FormItem>
+										)}
+									/>
+								</>
+							)}
 						</div>
 						<FormField
 							control={form.control}

@@ -21,6 +21,13 @@ export const kubernetesClusters = pgTable("kubernetes_cluster", {
 		.default("dokploy"),
 	ingressClassName: text("ingressClassName").notNull().default("nginx"),
 	tlsIssuerName: text("tlsIssuerName"),
+	// "both" serves every domain through an Ingress and an HTTPRoute at once,
+	// so DNS can move from the ingress controller to the Gateway with no gap.
+	routingMode: text("routingMode", { enum: ["ingress", "gateway", "both"] })
+		.notNull()
+		.default("ingress"),
+	gatewayName: text("gatewayName"),
+	gatewayNamespace: text("gatewayNamespace"),
 	defaultRegistryId: text("defaultRegistryId").references(
 		() => registry.registryId,
 		{ onDelete: "set null" },
@@ -66,6 +73,9 @@ const createSchema = createInsertSchema(kubernetesClusters, {
 		.optional(),
 	ingressClassName: z.string().min(1).optional(),
 	tlsIssuerName: z.string().optional().nullable(),
+	routingMode: z.enum(["ingress", "gateway", "both"]).optional(),
+	gatewayName: z.string().optional().nullable(),
+	gatewayNamespace: z.string().optional().nullable(),
 	defaultRegistryId: z.string().optional().nullable(),
 });
 
@@ -78,6 +88,9 @@ export const apiCreateKubernetesCluster = createSchema
 		defaultNamespacePrefix: true,
 		ingressClassName: true,
 		tlsIssuerName: true,
+		routingMode: true,
+		gatewayName: true,
+		gatewayNamespace: true,
 		defaultRegistryId: true,
 	})
 	.required({ name: true, kubeconfig: true });
@@ -98,4 +111,6 @@ export const apiTestKubernetesConnection = z.object({
 	kubernetesId: z.string().min(1).optional(),
 	kubeconfig: z.string().min(1).optional(),
 	context: z.string().optional(),
+	gatewayName: z.string().optional(),
+	gatewayNamespace: z.string().optional(),
 });

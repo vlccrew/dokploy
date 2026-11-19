@@ -62,8 +62,11 @@ export const ShowKubernetes = () => {
 																{index + 1}. {cluster.name}
 															</span>
 															<span className="text-xs text-muted-foreground">
-																Ingress: {cluster.ingressClassName} · Issuer:{" "}
-																{cluster.tlsIssuerName ?? "—"} · Created:{" "}
+																{cluster.routingMode !== "gateway" &&
+																	`Ingress: ${cluster.ingressClassName} · Issuer: ${cluster.tlsIssuerName ?? "—"} · `}
+																{cluster.routingMode !== "ingress" &&
+																	`Gateway: ${cluster.gatewayNamespace}/${cluster.gatewayName} · `}
+																Created:{" "}
 																{new Date(
 																	cluster.createdAt,
 																).toLocaleDateString()}
