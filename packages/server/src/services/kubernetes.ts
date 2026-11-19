@@ -53,10 +53,13 @@ export const findKubernetesClusterById = async (
 	return cluster;
 };
 
+// Backs kubernetes.all, which every member can call to pick a cluster, so it
+// must never return the kubeconfig (cluster credentials).
 export const findKubernetesClustersByOrganization = async (
 	organizationId: string,
-): Promise<KubernetesCluster[]> => {
+): Promise<Omit<KubernetesCluster, "kubeconfig">[]> => {
 	return db.query.kubernetesClusters.findMany({
+		columns: { kubeconfig: false },
 		where: eq(kubernetesClusters.organizationId, organizationId),
 	});
 };

@@ -20,7 +20,7 @@ import {
 	apiUpdateRegistry,
 	registry,
 } from "@/server/db/schema";
-import { createTRPCRouter, withPermission } from "../trpc";
+import { createTRPCRouter, protectedProcedure, withPermission } from "../trpc";
 export const registryRouter = createTRPCRouter({
 	create: withPermission("registry", "create")
 		.input(apiCreateRegistry)
@@ -88,6 +88,19 @@ export const registryRouter = createTRPCRouter({
 		});
 		return registryResponse;
 	}),
+	// Members lack registry:read (registry.all returns credentials) but must pick
+	// a registry when creating a Kubernetes app, so expose only what a picker needs.
+	forSelect: protectedProcedure.query(async ({ ctx }) =>
+		db.query.registry.findMany({
+			columns: {
+				registryId: true,
+				registryName: true,
+				registryUrl: true,
+				imagePrefix: true,
+			},
+			where: eq(registry.organizationId, ctx.session.activeOrganizationId),
+		}),
+	),
 	one: withPermission("registry", "read")
 		.input(apiFindOneRegistry)
 		.query(async ({ input, ctx }) => {

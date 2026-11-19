@@ -83,7 +83,7 @@ export const AddApplication = ({ environmentId, projectName }: Props) => {
 	const [visible, setVisible] = useState(false);
 	const slug = slugify(projectName);
 	const { data: servers } = api.server.withSSHKey.useQuery();
-	const { data: registries } = api.registry.all.useQuery();
+	const { data: registries } = api.registry.forSelect.useQuery();
 
 	const hasServers = servers && servers.length > 0;
 	// Show dropdown logic based on cloud environment

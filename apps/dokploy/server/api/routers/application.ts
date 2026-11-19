@@ -130,6 +130,8 @@ export const applicationRouter = createTRPCRouter({
 					}
 				}
 
+				await assertServiceCredentialAccess(ctx.session, input);
+
 				const newApplication = await createApplication(input);
 
 				await addNewService(ctx, newApplication.applicationId);
