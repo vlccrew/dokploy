@@ -21,6 +21,7 @@ import {
 } from "./deployment";
 import { isHttpError } from "./errors";
 import { ensureNamespace } from "./namespace";
+import { buildContainerResources } from "./resources";
 import { applyEnvSecret } from "./secrets";
 
 export type DatabaseKind = "postgres" | "redis" | "mysql" | "mariadb" | "mongo";
@@ -72,21 +73,6 @@ export interface DatabaseDeploymentInput {
 	 * implemented on K8s — when true the orchestrator rejects deploy. */
 	replicaSets?: boolean;
 }
-
-const parseMemory = (value?: string | null): string | undefined => {
-	if (!value) return undefined;
-	const bytes = Number.parseInt(value);
-	if (Number.isNaN(bytes) || bytes <= 0) return undefined;
-	return `${Math.max(1, Math.floor(bytes / (1024 * 1024)))}Mi`;
-};
-
-const parseCpu = (nanoCpus?: string | null): string | undefined => {
-	if (!nanoCpus) return undefined;
-	const n = Number.parseInt(nanoCpus);
-	if (Number.isNaN(n) || n <= 0) return undefined;
-	const cores = n / 1_000_000_000;
-	return `${Math.max(1, Math.round(cores * 1000))}m`;
-};
 
 const hashEnv = (env: Record<string, string>): string => {
 	const sortedKeys = Object.keys(env).sort();
@@ -215,11 +201,6 @@ export const buildDatabaseManifest = (
 
 	const volumes = userPieces.map(({ name, volume }) => ({ name, ...volume }));
 
-	const cpuLimit = parseCpu(input.cpuLimit);
-	const memoryLimit = parseMemory(input.memoryLimit);
-	const cpuRequest = parseCpu(input.cpuReservation);
-	const memoryRequest = parseMemory(input.memoryReservation);
-
 	const container: V1Container = {
 		name: appName,
 		image: input.image,
@@ -228,24 +209,7 @@ export const buildDatabaseManifest = (
 			envFrom: [{ secretRef: { name: envFromSecretName } }],
 		}),
 		ports: [{ containerPort: input.containerPort, protocol: "TCP" }],
-		resources: {
-			...(cpuLimit || memoryLimit
-				? {
-						limits: {
-							...(cpuLimit && { cpu: cpuLimit }),
-							...(memoryLimit && { memory: memoryLimit }),
-						},
-					}
-				: {}),
-			...(cpuRequest || memoryRequest
-				? {
-						requests: {
-							...(cpuRequest && { cpu: cpuRequest }),
-							...(memoryRequest && { memory: memoryRequest }),
-						},
-					}
-				: {}),
-		},
+		resources: buildContainerResources(input),
 		...(input.command && { command: ["/bin/sh", "-c", input.command] }),
 		...(input.args && input.args.length > 0 && { args: input.args }),
 		...(volumeMounts.length > 0 && { volumeMounts }),

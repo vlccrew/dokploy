@@ -10,6 +10,7 @@ import slugify from "slugify";
 import type { ApplicationNested } from "../builders";
 import type { KubernetesClient } from "./client";
 import { isHttpError } from "./errors";
+import { buildContainerResources } from "./resources";
 import { IMAGE_PULL_SECRET_NAME } from "./secrets";
 
 export const ENV_CHECKSUM_ANNOTATION = "dokploy.io/env-checksum";
@@ -54,21 +55,6 @@ export const k8sName = (raw: string): string => {
 export const k8sLabelValue = (raw: string): string => {
 	const trimmed = raw.replace(/^[^A-Za-z0-9]+/, "").slice(0, 63);
 	return trimmed.replace(/[^A-Za-z0-9]+$/, "");
-};
-
-const parseMemory = (value?: string | null): string | undefined => {
-	if (!value) return undefined;
-	const bytes = Number.parseInt(value);
-	if (Number.isNaN(bytes) || bytes <= 0) return undefined;
-	return `${Math.max(1, Math.floor(bytes / (1024 * 1024)))}Mi`;
-};
-
-const parseCpu = (nanoCpus?: string | null): string | undefined => {
-	if (!nanoCpus) return undefined;
-	const n = Number.parseInt(nanoCpus);
-	if (Number.isNaN(n) || n <= 0) return undefined;
-	const cores = n / 1_000_000_000;
-	return `${Math.max(1, Math.round(cores * 1000))}m`;
 };
 
 interface VolumePiece {
@@ -217,11 +203,9 @@ export const buildDeploymentManifest = ({
 	// ContainerCreating until the rollout times out, so tear the old pod down
 	// first — same reason the database Deployments use Recreate.
 	const hasRwoVolume = application.mounts.some((m) => m.type === "volume");
-
-	const cpuLimit = parseCpu(application.cpuLimit);
-	const memoryLimit = parseMemory(application.memoryLimit);
-	const cpuRequest = parseCpu(application.cpuReservation);
-	const memoryRequest = parseMemory(application.memoryReservation);
+	const replicas = application.replicas ?? 1;
+	// Skipped with an RWO volume: every replica needs the one node holding it.
+	const spreadAcrossNodes = replicas > 1 && !hasRwoVolume;
 
 	const ports = application.ports.map((p) => ({
 		containerPort: p.targetPort,
@@ -236,24 +220,7 @@ export const buildDeploymentManifest = ({
 			envFrom: [{ secretRef: { name: envFromSecretName } }],
 		}),
 		ports,
-		resources: {
-			...(cpuLimit || memoryLimit
-				? {
-						limits: {
-							...(cpuLimit && { cpu: cpuLimit }),
-							...(memoryLimit && { memory: memoryLimit }),
-						},
-					}
-				: {}),
-			...(cpuRequest || memoryRequest
-				? {
-						requests: {
-							...(cpuRequest && { cpu: cpuRequest }),
-							...(memoryRequest && { memory: memoryRequest }),
-						},
-					}
-				: {}),
-		},
+		resources: buildContainerResources(application),
 		...(application.command && {
 			command: ["/bin/sh", "-c", application.command],
 		}),
@@ -271,6 +238,27 @@ export const buildDeploymentManifest = ({
 		}),
 		restartPolicy: "Always",
 		...(volumes.length > 0 && { volumes: volumes as V1PodSpec["volumes"] }),
+		// One replica per node, enforced at scheduling time. Not podAntiAffinity:
+		// GKE Autopilot raises any pod using it to a 500m CPU request. A hard
+		// spread also never strands a replica as Pending when replicas outnumber
+		// nodes; it balances them instead. matchLabelKeys counts only pods of the
+		// same revision, so surge pods in a rollout ignore the old ones, and
+		// nodeTaintsPolicy leaves out nodes the pod can't run on (e.g. a tainted
+		// control plane), which would otherwise hold the minimum at zero.
+		...(spreadAcrossNodes && {
+			topologySpreadConstraints: [
+				{
+					maxSkew: 1,
+					topologyKey: "kubernetes.io/hostname",
+					whenUnsatisfiable: "DoNotSchedule",
+					labelSelector: {
+						matchLabels: { "app.kubernetes.io/name": appName },
+					},
+					matchLabelKeys: ["pod-template-hash"],
+					nodeTaintsPolicy: "Honor",
+				},
+			],
+		}),
 	};
 
 	const envChecksum = env && Object.keys(env).length > 0 ? hashEnv(env) : null;
@@ -286,7 +274,7 @@ export const buildDeploymentManifest = ({
 		kind: "Deployment",
 		metadata: { name: appName, namespace, labels },
 		spec: {
-			replicas: application.replicas ?? 1,
+			replicas,
 			...(hasRwoVolume && { strategy: { type: "Recreate" } }),
 			selector: { matchLabels: { "app.kubernetes.io/name": appName } },
 			template: {

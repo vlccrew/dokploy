@@ -202,7 +202,8 @@ export const ShowResources = ({ id, type }: Props) => {
 			<CardContent className="flex flex-col gap-4">
 				<AlertBlock type="info">
 					Please remember to click Redeploy after modify the resources to apply
-					the changes.
+					the changes. On Kubernetes, empty fields default to a 0.1 CPU / 256 MB
+					reservation and a 1 CPU / 1 GB limit.
 				</AlertBlock>
 				<Form {...form}>
 					<form

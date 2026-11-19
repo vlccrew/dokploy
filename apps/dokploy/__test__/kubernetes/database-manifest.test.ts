@@ -238,4 +238,14 @@ describe("buildDatabaseManifest", () => {
 		expect(resources?.limits?.memory).toBe("512Mi");
 		expect(resources?.limits?.cpu).toBe("500m");
 	});
+
+	test("blank resources get the same defaults as applications", () => {
+		const bundle = buildDatabaseManifest(makeInput({}), {}, NAMESPACE, null);
+		expect(
+			bundle.deployment.spec?.template.spec?.containers[0]?.resources,
+		).toEqual({
+			requests: { cpu: "100m", memory: "256Mi" },
+			limits: { cpu: "1000m", memory: "1024Mi" },
+		});
+	});
 });

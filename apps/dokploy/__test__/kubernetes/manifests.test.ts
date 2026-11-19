@@ -376,6 +376,96 @@ describe("buildDeploymentManifest", () => {
 		});
 	});
 
+	const resourcesOf = (overrides: Partial<ApplicationNested>) =>
+		buildDeploymentManifest({
+			application: {
+				...baseApp,
+				cpuLimit: null,
+				cpuReservation: null,
+				memoryLimit: null,
+				memoryReservation: null,
+				...overrides,
+			},
+			image: "img:1",
+			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
+		}).deployment.spec?.template.spec?.containers?.[0]?.resources;
+
+	test("blank resources get small requests and a bounded limit", () => {
+		// Without requests GKE Autopilot reserves 500m / 2Gi per container.
+		expect(resourcesOf({})).toEqual({
+			requests: { cpu: "100m", memory: "256Mi" },
+			limits: { cpu: "1000m", memory: "1024Mi" },
+		});
+	});
+
+	test("user-set resources win over the defaults", () => {
+		expect(
+			resourcesOf({
+				cpuReservation: "250000000",
+				memoryReservation: String(512 * 1024 * 1024),
+				cpuLimit: "2000000000",
+				memoryLimit: String(2048 * 1024 * 1024),
+			}),
+		).toEqual({
+			requests: { cpu: "250m", memory: "512Mi" },
+			limits: { cpu: "2000m", memory: "2048Mi" },
+		});
+	});
+
+	test("a default never ends up on the wrong side of a user value", () => {
+		// A reservation above the default limit raises the limit...
+		expect(
+			resourcesOf({
+				cpuReservation: "1500000000",
+				memoryReservation: String(2048 * 1024 * 1024),
+			})?.limits,
+		).toEqual({ cpu: "1500m", memory: "2048Mi" });
+		// ...and a limit below the default request lowers the request.
+		expect(
+			resourcesOf({
+				cpuLimit: "50000000",
+				memoryLimit: String(128 * 1024 * 1024),
+			})?.requests,
+		).toEqual({ cpu: "50m", memory: "128Mi" });
+	});
+
+	test("multiple replicas are spread one per node", () => {
+		const { deployment } = buildDeploymentManifest({
+			application: { ...baseApp, replicas: 3 },
+			image: "img:1",
+			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
+		});
+		const pod = deployment.spec?.template.spec;
+		expect(pod?.topologySpreadConstraints).toEqual([
+			{
+				maxSkew: 1,
+				topologyKey: "kubernetes.io/hostname",
+				whenUnsatisfiable: "DoNotSchedule",
+				labelSelector: {
+					matchLabels: { "app.kubernetes.io/name": "test-app-abc123" },
+				},
+				matchLabelKeys: ["pod-template-hash"],
+				nodeTaintsPolicy: "Honor",
+			},
+		]);
+		// GKE Autopilot forces a 500m CPU request on pods using anti-affinity.
+		expect(pod?.affinity).toBeUndefined();
+	});
+
+	test("a single replica has no spread constraint", () => {
+		const { deployment } = buildDeploymentManifest({
+			application: { ...baseApp, replicas: 1 },
+			image: "img:1",
+			namespace: "dokploy-test",
+			deploymentId: TEST_DEPLOYMENT_ID,
+		});
+		expect(
+			deployment.spec?.template.spec?.topologySpreadConstraints,
+		).toBeUndefined();
+	});
+
 	test("file mount: ConfigMap created, container volumeMount uses subPath", () => {
 		const fileApp = {
 			...baseApp,
@@ -460,6 +550,10 @@ describe("buildDeploymentManifest", () => {
 		expect(container?.volumeMounts?.[0]?.subPath).toBeUndefined();
 		// RWO PVC: the old pod must release it before the new one can attach.
 		expect(deployment.spec?.strategy).toEqual({ type: "Recreate" });
+		// baseApp has 2 replicas, but they all need the node holding the PVC.
+		expect(
+			deployment.spec?.template.spec?.topologySpreadConstraints,
+		).toBeUndefined();
 	});
 });
 
