@@ -13,10 +13,12 @@ import { getEnvironmentVariablesObject } from "../docker/utils";
 import { getKubernetesClient, type KubernetesClient } from "./client";
 import {
 	deleteDeployment,
+	deletePodDisruptionBudget,
 	ENV_CHECKSUM_ANNOTATION,
 	FILES_CHECKSUM_ANNOTATION,
 	k8sLabelValue,
 	k8sName,
+	tryApplyPodDisruptionBudget,
 	waitForRollout,
 } from "./deployment";
 import { isHttpError } from "./errors";
@@ -490,6 +492,13 @@ export const orchestrateKubernetesDatabaseDeploy = async ({
 	await upsertDeployment(client, bundle.deployment);
 	await log(`✅ Deployment '${bundle.appName}' applied`);
 
+	await tryApplyPodDisruptionBudget(
+		client,
+		{ appName: input.appName, replicas: 1 },
+		namespace,
+		log,
+	);
+
 	await upsertService(client, bundle.service);
 	await log(`✅ Service '${bundle.appName}' applied`);
 
@@ -543,6 +552,14 @@ export const cleanupKubernetesDatabase = async (
 	} catch (err) {
 		errors.push(
 			`Deployment delete failed: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+
+	try {
+		await deletePodDisruptionBudget(client, slug, input.namespace);
+	} catch (err) {
+		errors.push(
+			`PodDisruptionBudget delete failed: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
 

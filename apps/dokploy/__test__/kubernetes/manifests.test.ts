@@ -1,15 +1,22 @@
-import type { ApplicationNested, Domain } from "@dokploy/server";
+import type {
+	ApplicationNested,
+	Domain,
+	KubernetesClient,
+} from "@dokploy/server";
 import {
+	applyPodDisruptionBudget,
 	buildDeploymentManifest,
 	buildIngressManifest,
+	buildPodDisruptionBudget,
 	buildServiceManifest,
 	DEPLOYMENT_ID_ANNOTATION,
 	ENV_CHECKSUM_ANNOTATION,
 	FILES_CHECKSUM_ANNOTATION,
 	ingressName,
 	staleIngressNames,
+	tryApplyPodDisruptionBudget,
 } from "@dokploy/server";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 const TEST_DEPLOYMENT_ID = "deploy-test-0001";
 
@@ -554,6 +561,87 @@ describe("buildDeploymentManifest", () => {
 		expect(
 			deployment.spec?.template.spec?.topologySpreadConstraints,
 		).toBeUndefined();
+	});
+});
+
+describe("PodDisruptionBudget", () => {
+	test("multi-replica apps may lose at most one pod to a voluntary disruption", () => {
+		expect(buildPodDisruptionBudget(baseApp, "dokploy-test")).toEqual({
+			apiVersion: "policy/v1",
+			kind: "PodDisruptionBudget",
+			metadata: {
+				name: "test-app-abc123",
+				namespace: "dokploy-test",
+				labels: {
+					"app.kubernetes.io/managed-by": "dokploy",
+					"app.kubernetes.io/name": "test-app-abc123",
+				},
+			},
+			spec: {
+				maxUnavailable: 1,
+				selector: {
+					matchLabels: { "app.kubernetes.io/name": "test-app-abc123" },
+				},
+				unhealthyPodEvictionPolicy: "AlwaysAllow",
+			},
+		});
+	});
+
+	test("a single replica may not be evicted at all", () => {
+		// Keeps the cluster autoscaler from draining the node out from under it.
+		expect(
+			buildPodDisruptionBudget({ ...baseApp, replicas: 1 }, "dokploy-test").spec
+				?.maxUnavailable,
+		).toBe(0);
+	});
+
+	const httpError = (code: number) =>
+		Object.assign(new Error(`HTTP ${code}`), { code });
+	const fakeClient = (read: () => Promise<unknown>) => {
+		const policy = {
+			readNamespacedPodDisruptionBudget: vi.fn(read),
+			replaceNamespacedPodDisruptionBudget: vi.fn(async () => ({})),
+			createNamespacedPodDisruptionBudget: vi.fn(async () => ({})),
+		};
+		return { policy, client: { policy } as unknown as KubernetesClient };
+	};
+
+	test("apply creates the budget when it is missing", async () => {
+		const { policy, client } = fakeClient(async () => {
+			throw httpError(404);
+		});
+		await applyPodDisruptionBudget(client, baseApp, "ns");
+		expect(policy.createNamespacedPodDisruptionBudget).toHaveBeenCalledTimes(1);
+		expect(policy.replaceNamespacedPodDisruptionBudget).not.toHaveBeenCalled();
+	});
+
+	test("apply replaces an existing budget, e.g. after a replica change", async () => {
+		const { policy, client } = fakeClient(async () => ({}));
+		await applyPodDisruptionBudget(client, { ...baseApp, replicas: 1 }, "ns");
+		expect(policy.replaceNamespacedPodDisruptionBudget).toHaveBeenCalledWith(
+			expect.objectContaining({
+				name: "test-app-abc123",
+				body: expect.objectContaining({
+					spec: expect.objectContaining({ maxUnavailable: 0 }),
+				}),
+			}),
+		);
+		expect(policy.createNamespacedPodDisruptionBudget).not.toHaveBeenCalled();
+	});
+
+	test("a cluster that forbids budgets only gets a warning in the deploy log", async () => {
+		const { client } = fakeClient(async () => {
+			throw httpError(403);
+		});
+		const lines: string[] = [];
+		await expect(
+			tryApplyPodDisruptionBudget(client, baseApp, "ns", async (l) => {
+				lines.push(l);
+			}),
+		).resolves.toBeUndefined();
+		expect(lines).toEqual([
+			expect.stringContaining("PodDisruptionBudget not applied"),
+		]);
 	});
 });
 

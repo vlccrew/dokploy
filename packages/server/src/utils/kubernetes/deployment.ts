@@ -4,6 +4,7 @@ import type {
 	V1Container,
 	V1Deployment,
 	V1PersistentVolumeClaim,
+	V1PodDisruptionBudget,
 	V1PodSpec,
 } from "@kubernetes/client-node";
 import slugify from "slugify";
@@ -304,6 +305,106 @@ export const buildDeploymentManifest = ({
 	) as V1PersistentVolumeClaim[];
 
 	return { deployment, configMaps, pvcs, appName };
+};
+
+interface DisruptionTarget {
+	appName: string;
+	replicas?: number | null;
+}
+
+// GKE Autopilot keeps adding spare-capacity nodes and the cluster autoscaler
+// drains them minutes later, restarting whatever pods landed there. The
+// autoscaler never evicts past a budget, so a single replica is left alone and
+// a multi-replica app loses at most one pod at a time. (The safe-to-evict
+// annotation would also do it, but Autopilot raises any pod carrying it to a
+// 500m CPU / 512Mi request.) Rollouts are unaffected: the Deployment
+// controller deletes pods rather than evicting them.
+export const buildPodDisruptionBudget = (
+	target: DisruptionTarget,
+	namespace: string,
+): V1PodDisruptionBudget => {
+	const appName = k8sName(target.appName);
+	return {
+		apiVersion: "policy/v1",
+		kind: "PodDisruptionBudget",
+		metadata: {
+			name: appName,
+			namespace,
+			labels: {
+				"app.kubernetes.io/managed-by": "dokploy",
+				"app.kubernetes.io/name": appName,
+			},
+		},
+		spec: {
+			maxUnavailable: (target.replicas ?? 1) > 1 ? 1 : 0,
+			selector: { matchLabels: { "app.kubernetes.io/name": appName } },
+			// Otherwise a crash-looping or not-ready pod would hold up node
+			// drains, including GKE's node upgrades, until it recovers.
+			unhealthyPodEvictionPolicy: "AlwaysAllow",
+		},
+	};
+};
+
+export const applyPodDisruptionBudget = async (
+	client: KubernetesClient,
+	target: DisruptionTarget,
+	namespace: string,
+): Promise<V1PodDisruptionBudget> => {
+	const pdb = buildPodDisruptionBudget(target, namespace);
+	const name = k8sName(target.appName);
+	try {
+		await client.policy.readNamespacedPodDisruptionBudget({ name, namespace });
+		await client.policy.replaceNamespacedPodDisruptionBudget({
+			name,
+			namespace,
+			body: pdb,
+		});
+	} catch (err) {
+		if (isHttpError(err) && err.code === 404) {
+			await client.policy.createNamespacedPodDisruptionBudget({
+				namespace,
+				body: pdb,
+			});
+		} else {
+			throw err;
+		}
+	}
+	return pdb;
+};
+
+// A budget only guards against voluntary disruptions, so a kubeconfig without
+// access to policy/v1 shouldn't fail the deploy.
+export const tryApplyPodDisruptionBudget = async (
+	client: KubernetesClient,
+	target: DisruptionTarget,
+	namespace: string,
+	log: (line: string) => Promise<void>,
+): Promise<void> => {
+	try {
+		const pdb = await applyPodDisruptionBudget(client, target, namespace);
+		await log(
+			`✅ PodDisruptionBudget '${pdb.metadata?.name}' applied (maxUnavailable: ${pdb.spec?.maxUnavailable})`,
+		);
+	} catch (err) {
+		await log(
+			`⚠️ PodDisruptionBudget not applied: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+};
+
+export const deletePodDisruptionBudget = async (
+	client: KubernetesClient,
+	name: string,
+	namespace: string,
+): Promise<void> => {
+	try {
+		await client.policy.deleteNamespacedPodDisruptionBudget({
+			name,
+			namespace,
+		});
+	} catch (err) {
+		if (!isHttpError(err) || err.code !== 404) throw err;
+	}
 };
 
 export const applyDeployment = async (

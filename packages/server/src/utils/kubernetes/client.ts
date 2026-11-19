@@ -5,6 +5,7 @@ import {
 	KubeConfig,
 	Log,
 	NetworkingV1Api,
+	PolicyV1Api,
 	VersionApi,
 } from "@kubernetes/client-node";
 import { findKubernetesClusterById } from "../../services/kubernetes";
@@ -16,6 +17,7 @@ export interface KubernetesClient {
 	core: CoreV1Api;
 	apps: AppsV1Api;
 	networking: NetworkingV1Api;
+	policy: PolicyV1Api;
 	version: VersionApi;
 }
 
@@ -36,6 +38,7 @@ export const buildKubernetesClient = (
 	core: kubeConfig.makeApiClient(CoreV1Api),
 	apps: kubeConfig.makeApiClient(AppsV1Api),
 	networking: kubeConfig.makeApiClient(NetworkingV1Api),
+	policy: kubeConfig.makeApiClient(PolicyV1Api),
 	version: kubeConfig.makeApiClient(VersionApi),
 });
 

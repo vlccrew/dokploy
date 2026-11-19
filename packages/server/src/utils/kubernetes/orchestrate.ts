@@ -9,9 +9,11 @@ import { getKubernetesClient } from "./client";
 import {
 	applyDeployment,
 	deleteDeployment,
+	deletePodDisruptionBudget,
 	k8sName,
 	rolloutRestartDeployment,
 	scaleDeployment,
+	tryApplyPodDisruptionBudget,
 	waitForRollout,
 } from "./deployment";
 import { isHttpError } from "./errors";
@@ -183,6 +185,8 @@ export const orchestrateKubernetesDeploy = async ({
 	await log(
 		`✅ Deployment '${appName}' applied (replicas: ${application.replicas})`,
 	);
+
+	await tryApplyPodDisruptionBudget(client, application, namespace, log);
 
 	await applyService(client, application, namespace, fallbackPorts);
 	await log(`✅ Service '${appName}' applied`);
@@ -408,6 +412,14 @@ export const cleanupKubernetesApplication = async (
 	} catch (err) {
 		errors.push(
 			`Service delete failed: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+
+	try {
+		await deletePodDisruptionBudget(client, slug, input.namespace);
+	} catch (err) {
+		errors.push(
+			`PodDisruptionBudget delete failed: ${err instanceof Error ? err.message : String(err)}`,
 		);
 	}
 
