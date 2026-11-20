@@ -14,6 +14,7 @@ import {
 	FILES_CHECKSUM_ANNOTATION,
 	ingressName,
 	staleIngressNames,
+	tlsSecretName,
 	tryApplyPodDisruptionBudget,
 } from "@dokploy/server";
 import { describe, expect, test, vi } from "vitest";
@@ -712,6 +713,91 @@ describe("buildIngressManifest", () => {
 		expect(
 			ing.metadata.annotations["nginx.ingress.kubernetes.io/rewrite-target"],
 		).toBe("/api$1");
+	});
+
+	test("Let's Encrypt paths on one host share a Secret and keep the issuer", () => {
+		const le = {
+			...baseDomain,
+			https: true,
+			certificateType: "letsencrypt" as const,
+		};
+		const domains: Domain[] = [
+			{ ...le, domainId: "dom-api", uniqueConfigKey: 9, path: "/api" },
+			{ ...le, domainId: "dom-root", uniqueConfigKey: 8, path: "/" },
+		];
+		for (const domain of domains) {
+			const ing = buildIngressManifest({
+				application: baseApp,
+				domain,
+				domains,
+				namespace: "dokploy-test",
+				context: {
+					ingressClassName: "nginx",
+					tlsIssuerName: "letsencrypt-prod",
+				},
+			});
+			expect(ing.metadata.name).toBe(
+				ingressName("test-app-abc123", domain.uniqueConfigKey),
+			);
+			expect(ing.metadata.annotations["cert-manager.io/cluster-issuer"]).toBe(
+				"letsencrypt-prod",
+			);
+			const tls = (ing.spec as { tls?: { secretName: string }[] }).tls;
+			expect(tls?.[0]?.secretName).toBe("test-app-abc123-8-tls");
+		}
+	});
+});
+
+describe("tlsSecretName", () => {
+	const appName = "test-app-abc123";
+	const le = {
+		...baseDomain,
+		https: true,
+		certificateType: "letsencrypt" as const,
+	};
+
+	test("a lone domain keeps the Secret named after its own Ingress", () => {
+		expect(tlsSecretName(appName, { ...le, uniqueConfigKey: 5 })).toBe(
+			`${ingressName(appName, 5)}-tls`,
+		);
+	});
+
+	test("Let's Encrypt domains on one host use the oldest domain's Secret", () => {
+		const domains = [
+			{ ...le, uniqueConfigKey: 113 },
+			{ ...le, uniqueConfigKey: 108 },
+			{ ...le, uniqueConfigKey: 110, host: "TEST.example.com" },
+		];
+		for (const domain of domains) {
+			expect(tlsSecretName(appName, domain, domains)).toBe(
+				`${ingressName(appName, 108)}-tls`,
+			);
+		}
+	});
+
+	test("other hosts, plain HTTP and other certificate types don't count", () => {
+		const domain = { ...le, uniqueConfigKey: 20 };
+		const domains = [
+			domain,
+			{ ...le, uniqueConfigKey: 1, host: "other.example.com" },
+			{ ...le, uniqueConfigKey: 2, https: false },
+			{ ...le, uniqueConfigKey: 3, certificateType: "custom" as const },
+			{ ...le, uniqueConfigKey: 4, certificateType: "none" as const },
+		];
+		expect(tlsSecretName(appName, domain, domains)).toBe(
+			`${ingressName(appName, 20)}-tls`,
+		);
+	});
+
+	test("a custom certificate keeps a Secret per domain", () => {
+		const custom = {
+			...le,
+			certificateType: "custom" as const,
+			uniqueConfigKey: 7,
+		};
+		expect(
+			tlsSecretName(appName, custom, [custom, { ...le, uniqueConfigKey: 1 }]),
+		).toBe(`${ingressName(appName, 7)}-tls`);
 	});
 });
 

@@ -236,10 +236,17 @@ export const orchestrateKubernetesDeploy = async ({
 		}
 
 		for (const domain of domains) {
-			await manageIngress(client, application, domain, namespace, {
-				ingressClassName: cluster.ingressClassName,
-				tlsIssuerName: cluster.tlsIssuerName,
-			});
+			await manageIngress(
+				client,
+				application,
+				domain,
+				namespace,
+				{
+					ingressClassName: cluster.ingressClassName,
+					tlsIssuerName: cluster.tlsIssuerName,
+				},
+				domains,
+			);
 			await log(
 				`✅ Ingress for '${domain.host}${domain.path ?? "/"}' (port ${domain.port ?? 3000}) applied`,
 			);

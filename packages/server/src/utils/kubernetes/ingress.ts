@@ -18,6 +18,49 @@ export const ingressName = (
 	uniqueKey: number | null | undefined,
 ) => k8sName(`${appName}-${uniqueKey ?? "default"}`);
 
+type TlsDomain = Pick<
+	Domain,
+	"host" | "https" | "certificateType" | "uniqueConfigKey"
+>;
+
+/**
+ * The Secret that holds a domain's certificate.
+ *
+ * An app's Let's Encrypt domains on the same host share one Secret, named
+ * after the oldest of them (lowest `uniqueConfigKey`). With a Secret per
+ * domain, cert-manager ordered a certificate for every path of a host, and
+ * Let's Encrypt issues at most 5 per week for the same host, so the sixth
+ * path's certificate failed. nginx serves one certificate per host anyway.
+ * Reusing an existing domain's name means an app deployed before this keeps
+ * the certificate it already has, rather than ordering a new one and serving
+ * nginx's self-signed fallback until it arrives.
+ *
+ * A custom certificate keeps a Secret per domain, since manageIngress writes
+ * each one from that domain's own certificate.
+ */
+export const tlsSecretName = (
+	appName: string,
+	domain: TlsDomain,
+	domains: TlsDomain[] = [],
+): string => {
+	let key = domain.uniqueConfigKey;
+	if (domain.certificateType === "letsencrypt") {
+		const host = domain.host.toLowerCase();
+		for (const other of domains) {
+			if (
+				other.https &&
+				other.certificateType === "letsencrypt" &&
+				other.host.toLowerCase() === host &&
+				other.uniqueConfigKey != null &&
+				(key == null || other.uniqueConfigKey < key)
+			) {
+				key = other.uniqueConfigKey;
+			}
+		}
+	}
+	return k8sName(`${ingressName(k8sName(appName), key)}-tls`);
+};
+
 const annotationsForApp = (
 	application: ApplicationNested,
 ): Record<string, string> => {
@@ -50,6 +93,8 @@ const annotationsForApp = (
 export interface IngressBuildInput {
 	application: ApplicationNested;
 	domain: Domain;
+	/** The app's domains being exposed; picks the shared TLS Secret. */
+	domains?: Domain[];
 	namespace: string;
 	context: IngressContext;
 }
@@ -57,6 +102,7 @@ export interface IngressBuildInput {
 export const buildIngressManifest = ({
 	application,
 	domain,
+	domains = [],
 	namespace,
 	context,
 }: IngressBuildInput) => {
@@ -88,7 +134,7 @@ export const buildIngressManifest = ({
 			? [
 					{
 						hosts: [domain.host],
-						secretName: k8sName(`${name}-tls`),
+						secretName: tlsSecretName(application.appName, domain, domains),
 					},
 				]
 			: undefined;
@@ -139,6 +185,7 @@ export const manageIngress = async (
 	domain: Domain,
 	namespace: string,
 	context: IngressContext,
+	domains: Domain[],
 ): Promise<void> => {
 	if (
 		domain.https &&
@@ -155,17 +202,13 @@ export const manageIngress = async (
 			),
 		});
 		if (cert) {
-			const slug = k8sName(application.appName);
-			const secretName = k8sName(
-				`${ingressName(slug, domain.uniqueConfigKey)}-tls`,
-			);
 			await applyTlsSecret(
 				client,
 				namespace,
-				secretName,
+				tlsSecretName(application.appName, domain),
 				cert.certificateData,
 				cert.privateKey,
-				slug,
+				k8sName(application.appName),
 			);
 		}
 	}
@@ -173,6 +216,7 @@ export const manageIngress = async (
 	const body = buildIngressManifest({
 		application,
 		domain,
+		domains,
 		namespace,
 		context,
 	});
