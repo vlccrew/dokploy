@@ -4,10 +4,13 @@ import type {
 	V1Container,
 	V1Deployment,
 	V1PersistentVolumeClaim,
+	V1Pod,
 	V1PodDisruptionBudget,
 	V1PodSpec,
+	V1Probe,
 } from "@kubernetes/client-node";
 import slugify from "slugify";
+import type { Domain } from "../../services/domain";
 import type { ApplicationNested } from "../builders";
 import type { KubernetesClient } from "./client";
 import { isHttpError } from "./errors";
@@ -17,6 +20,46 @@ import { IMAGE_PULL_SECRET_NAME } from "./secrets";
 export const ENV_CHECKSUM_ANNOTATION = "dokploy.io/env-checksum";
 export const FILES_CHECKSUM_ANNOTATION = "dokploy.io/files-checksum";
 export const DEPLOYMENT_ID_ANNOTATION = "dokploy.io/deployment-id";
+
+// A new pod has to stay Ready this long before it counts as available, and
+// only then does a rolling update remove an old pod. A container that crashes
+// a few seconds after starting therefore never replaces a working one.
+export const MIN_READY_SECONDS = 10;
+// After this long without progress the Deployment controller marks the
+// rollout failed (ProgressDeadlineExceeded), which waitForRollout reports.
+export const PROGRESS_DEADLINE_SECONDS = 300;
+
+// A terminating pod gets SIGTERM at the same moment it's removed from the
+// Service's endpoints, and ingress-nginx or a Gateway routes to it until that
+// removal reaches them. Waiting first keeps it serving those last requests.
+export const PRE_STOP_SLEEP_SECONDS = 5;
+
+/**
+ * Whether the API server takes the native `sleep` preStop action (on by
+ * default since Kubernetes 1.30). Older servers drop the field and then reject
+ * the empty hook, so it's only set when this is true.
+ */
+export const supportsSleepAction = async (
+	client: KubernetesClient,
+): Promise<boolean> => {
+	try {
+		const { major, minor } = await client.version.getCode();
+		// Managed clusters report minors like "30+".
+		const maj = Number.parseInt(major, 10);
+		const min = Number.parseInt(minor, 10);
+		return maj > 1 || (maj === 1 && min >= 30);
+	} catch {
+		return false;
+	}
+};
+
+// Faster than the 10s default period, so a pod takes traffic soon after it
+// starts listening; a 3s timeout keeps a slow health endpoint from flapping.
+export const READINESS_PROBE_TIMING = {
+	periodSeconds: 5,
+	timeoutSeconds: 3,
+	failureThreshold: 3,
+} as const;
 
 // Pods read `envFrom` Secret/ConfigMap values only at start time, so updating
 // the Secret in place leaves running pods with the old env. Putting a hash of
@@ -146,8 +189,45 @@ const buildPvcs = (
 			},
 		}));
 
+type ProbeSettings = Pick<ApplicationNested, "kubernetesProbes" | "ports"> & {
+	domains?: Pick<Domain, "port" | "enabled">[];
+};
+
+/**
+ * The app's readiness probe: the one set on the app, or else a TCP check on
+ * the port its first domain routes to. The app has to listen there for the
+ * domain to work at all, so the check is safe, and it keeps traffic off a new
+ * pod until it listens. Apps without a domain (workers) get no probe unless
+ * one is set.
+ */
+export const buildReadinessProbe = (
+	application: ProbeSettings,
+): V1Probe | undefined => {
+	const configured = application.kubernetesProbes?.readiness;
+	if (configured?.type === "none") return undefined;
+	const domain = application.domains?.find((d) => d.enabled);
+	const domainPort = domain ? (domain.port ?? 3000) : undefined;
+	if (!configured) {
+		return domainPort
+			? { tcpSocket: { port: domainPort }, ...READINESS_PROBE_TIMING }
+			: undefined;
+	}
+	const port =
+		configured.port ??
+		domainPort ??
+		application.ports.find((p) => p.protocol !== "udp")?.targetPort ??
+		3000;
+	return configured.type === "http"
+		? {
+				httpGet: { path: configured.path, port },
+				...READINESS_PROBE_TIMING,
+			}
+		: { tcpSocket: { port }, ...READINESS_PROBE_TIMING };
+};
+
 export interface DeploymentBuildInput {
-	application: ApplicationNested;
+	/** `domains` picks the default readiness probe's port. */
+	application: ApplicationNested & ProbeSettings;
 	image: string;
 	namespace: string;
 	/**
@@ -174,6 +254,8 @@ export interface DeploymentBuildInput {
 	 * reference is unchanged (e.g. sourceType=docker with a fixed tag).
 	 */
 	deploymentId: string;
+	/** Whether the cluster takes the native `sleep` preStop action. */
+	sleepAction?: boolean;
 }
 
 export const buildDeploymentManifest = ({
@@ -184,6 +266,7 @@ export const buildDeploymentManifest = ({
 	envFromSecretName = null,
 	env = null,
 	deploymentId,
+	sleepAction = false,
 }: DeploymentBuildInput) => {
 	const appName = k8sName(application.appName);
 	const labels = {
@@ -213,6 +296,8 @@ export const buildDeploymentManifest = ({
 		protocol: p.protocol === "udp" ? "UDP" : "TCP",
 	}));
 
+	const readinessProbe = buildReadinessProbe(application);
+	const routed = application.domains?.some((d) => d.enabled) ?? false;
 	const container: V1Container = {
 		name: appName,
 		image,
@@ -230,6 +315,13 @@ export const buildDeploymentManifest = ({
 				args: application.args,
 			}),
 		...(volumeMounts.length > 0 && { volumeMounts }),
+		...(readinessProbe && { readinessProbe }),
+		...(routed &&
+			sleepAction && {
+				lifecycle: {
+					preStop: { sleep: { seconds: PRE_STOP_SLEEP_SECONDS } },
+				},
+			}),
 	};
 
 	const podSpec: V1PodSpec = {
@@ -276,6 +368,8 @@ export const buildDeploymentManifest = ({
 		metadata: { name: appName, namespace, labels },
 		spec: {
 			replicas,
+			minReadySeconds: MIN_READY_SECONDS,
+			progressDeadlineSeconds: PROGRESS_DEADLINE_SECONDS,
 			...(hasRwoVolume && { strategy: { type: "Recreate" } }),
 			selector: { matchLabels: { "app.kubernetes.io/name": appName } },
 			template: {
@@ -420,7 +514,7 @@ export const deletePodDisruptionBudget = async (
 
 export const applyDeployment = async (
 	client: KubernetesClient,
-	application: ApplicationNested,
+	application: DeploymentBuildInput["application"],
 	image: string,
 	namespace: string,
 	deploymentId: string,
@@ -436,6 +530,7 @@ export const applyDeployment = async (
 		envFromSecretName,
 		env,
 		deploymentId,
+		sleepAction: await supportsSleepAction(client),
 	});
 
 	for (const pvc of pvcs) {
@@ -573,30 +668,152 @@ export const deleteDeployment = async (
 	}
 };
 
+export type RolloutStatus =
+	| { state: "complete" }
+	| { state: "progressing"; message: string }
+	| { state: "failed"; message: string };
+
+/**
+ * The checks `kubectl rollout status` makes, in its order. During a rolling
+ * update `availableReplicas` still counts the old pods, so the rollout is only
+ * complete once no old pods are left and every new one is available.
+ */
+export const rolloutStatus = (deployment: V1Deployment): RolloutStatus => {
+	const status = deployment.status ?? {};
+	if (
+		(status.observedGeneration ?? 0) < (deployment.metadata?.generation ?? 0)
+	) {
+		return {
+			state: "progressing",
+			message: "Waiting for the Deployment controller to pick up the change",
+		};
+	}
+	const progressing = status.conditions?.find((c) => c.type === "Progressing");
+	if (progressing?.reason === "ProgressDeadlineExceeded") {
+		return {
+			state: "failed",
+			message: `no progress for ${deployment.spec?.progressDeadlineSeconds ?? 600}s`,
+		};
+	}
+	const desired = deployment.spec?.replicas ?? 1;
+	const updated = status.updatedReplicas ?? 0;
+	const total = status.replicas ?? 0;
+	const available = status.availableReplicas ?? 0;
+	if (updated < desired) {
+		return {
+			state: "progressing",
+			message: `${updated} of ${desired} new pod(s) created`,
+		};
+	}
+	if (total > updated) {
+		return {
+			state: "progressing",
+			message: `${total - updated} old pod(s) still running`,
+		};
+	}
+	if (available < updated || (status.unavailableReplicas ?? 0) > 0) {
+		return {
+			state: "progressing",
+			message: `${available} of ${updated} new pod(s) available`,
+		};
+	}
+	return { state: "complete" };
+};
+
+const describeUnreadyPod = (pod: V1Pod): string => {
+	const container = pod.status?.containerStatuses?.[0];
+	const parts: string[] = [];
+	if (container?.state?.waiting?.reason) {
+		parts.push(container.state.waiting.reason);
+	} else if (container?.state?.terminated?.reason) {
+		parts.push(container.state.terminated.reason);
+	} else if (container?.state?.running) {
+		parts.push("running, readiness check not passing");
+	} else {
+		const unscheduled = pod.status?.conditions?.find(
+			(c) => c.type === "PodScheduled" && c.status === "False",
+		);
+		parts.push(unscheduled?.message ?? pod.status?.phase ?? "unknown state");
+	}
+	const exitCode =
+		container?.state?.terminated?.exitCode ??
+		container?.lastState?.terminated?.exitCode;
+	if (exitCode !== undefined) parts.push(`last exit code ${exitCode}`);
+	if (container?.restartCount) parts.push(`${container.restartCount} restarts`);
+	return `${pod.metadata?.name}: ${parts.join(", ")}`;
+};
+
+// Only for the failure message, so it never fails the wait itself.
+const describeUnreadyPods = async (
+	client: KubernetesClient,
+	name: string,
+	namespace: string,
+): Promise<string> => {
+	try {
+		const pods = await client.core.listNamespacedPod({
+			namespace,
+			labelSelector: `app.kubernetes.io/name=${name}`,
+		});
+		const unready = pods.items.filter(
+			(pod) =>
+				!pod.metadata?.deletionTimestamp &&
+				!pod.status?.conditions?.some(
+					(c) => c.type === "Ready" && c.status === "True",
+				),
+		);
+		return unready.length > 0
+			? ` (${unready.map(describeUnreadyPod).join("; ")})`
+			: "";
+	} catch {
+		return "";
+	}
+};
+
+/**
+ * Wait for a Deployment's rollout to finish, as `kubectl rollout status` does.
+ * The Deployment's progress deadline decides when a stuck rollout has failed;
+ * `timeoutMs` only bounds the wait if the controller never reports.
+ */
 export const waitForRollout = async (
 	client: KubernetesClient,
 	name: string,
 	namespace: string,
-	timeoutMs = 5 * 60 * 1000,
+	{
+		onProgress,
+		timeoutMs = 15 * 60 * 1000,
+		intervalMs = 2_000,
+	}: {
+		/** Called with each new "still waiting" message. */
+		onProgress?: (message: string) => Promise<void>;
+		timeoutMs?: number;
+		intervalMs?: number;
+	} = {},
 ): Promise<{ ready: boolean; message?: string }> => {
-	const start = Date.now();
-	while (Date.now() - start < timeoutMs) {
-		const dep = await client.apps.readNamespacedDeployment({ name, namespace });
-		const status = dep.status ?? {};
-		const desired = dep.spec?.replicas ?? 0;
-		if (
-			status.observedGeneration !== undefined &&
-			dep.metadata?.generation !== undefined &&
-			status.observedGeneration >= dep.metadata.generation &&
-			(status.availableReplicas ?? 0) >= desired &&
-			(status.updatedReplicas ?? 0) >= desired
-		) {
-			return { ready: true };
+	const deadline = Date.now() + timeoutMs;
+	let reported = "";
+	for (;;) {
+		const deployment = await client.apps.readNamespacedDeployment({
+			name,
+			namespace,
+		});
+		const status = rolloutStatus(deployment);
+		if (status.state === "complete") return { ready: true };
+		if (status.state === "failed") {
+			return {
+				ready: false,
+				message: `Rollout of '${name}' failed: ${status.message}${await describeUnreadyPods(client, name, namespace)}`,
+			};
 		}
-		await new Promise((r) => setTimeout(r, 2_000));
+		if (status.message !== reported) {
+			reported = status.message;
+			await onProgress?.(status.message);
+		}
+		if (Date.now() >= deadline) {
+			return {
+				ready: false,
+				message: `Rollout of '${name}' did not finish in ${Math.round(timeoutMs / 60_000)}m: ${status.message}${await describeUnreadyPods(client, name, namespace)}`,
+			};
+		}
+		await new Promise((r) => setTimeout(r, intervalMs));
 	}
-	return {
-		ready: false,
-		message: `Rollout did not complete in ${timeoutMs}ms`,
-	};
 };

@@ -301,8 +301,10 @@ export const orchestrateKubernetesDeploy = async ({
 		}
 	}
 
-	await log(`⏳ Waiting for rollout of '${appName}' (timeout 5m)...`);
-	const rollout = await waitForRollout(client, appName, namespace);
+	await log(`⏳ Waiting for rollout of '${appName}'...`);
+	const rollout = await waitForRollout(client, appName, namespace, {
+		onProgress: (message) => log(`⏳ ${message}`),
+	});
 	if (!rollout.ready) {
 		const msg =
 			rollout.message ?? "Kubernetes rollout did not complete in time.";
@@ -363,8 +365,10 @@ export const restartKubernetesApplication = async ({
 	}
 	await log(`✅ Triggered rollout restart of '${appName}'`);
 
-	await log(`⏳ Waiting for rollout of '${appName}' (timeout 5m)...`);
-	const rollout = await waitForRollout(client, appName, namespace);
+	await log(`⏳ Waiting for rollout of '${appName}'...`);
+	const rollout = await waitForRollout(client, appName, namespace, {
+		onProgress: (message) => log(`⏳ ${message}`),
+	});
 	if (!rollout.ready) {
 		const msg =
 			rollout.message ?? "Kubernetes rollout did not complete in time.";

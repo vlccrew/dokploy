@@ -18,6 +18,9 @@ import {
 	FILES_CHECKSUM_ANNOTATION,
 	k8sLabelValue,
 	k8sName,
+	MIN_READY_SECONDS,
+	PROGRESS_DEADLINE_SECONDS,
+	READINESS_PROBE_TIMING,
 	tryApplyPodDisruptionBudget,
 	waitForRollout,
 } from "./deployment";
@@ -215,6 +218,13 @@ export const buildDatabaseManifest = (
 		...(input.command && { command: ["/bin/sh", "-c", input.command] }),
 		...(input.args && input.args.length > 0 && { args: input.args }),
 		...(volumeMounts.length > 0 && { volumeMounts }),
+		// The official images run their first-boot init on a server without
+		// TCP, so this passes only once the real server is up, and the rollout
+		// isn't reported done before then.
+		readinessProbe: {
+			tcpSocket: { port: input.containerPort },
+			...READINESS_PROBE_TIMING,
+		},
 	};
 
 	const configMaps = userPieces
@@ -239,6 +249,10 @@ export const buildDatabaseManifest = (
 			// pod before starting the new one.
 			strategy: { type: "Recreate" },
 			replicas: 1,
+			// No old pod to keep serving under Recreate, but a container that
+			// exits right after starting is then reported as a failed rollout.
+			minReadySeconds: MIN_READY_SECONDS,
+			progressDeadlineSeconds: PROGRESS_DEADLINE_SECONDS,
 			selector: { matchLabels: { "app.kubernetes.io/name": appName } },
 			template: {
 				metadata: {
@@ -502,8 +516,10 @@ export const orchestrateKubernetesDatabaseDeploy = async ({
 	await upsertService(client, bundle.service);
 	await log(`✅ Service '${bundle.appName}' applied`);
 
-	await log(`⏳ Waiting for rollout of '${bundle.appName}' (timeout 5m)...`);
-	const rollout = await waitForRollout(client, bundle.appName, namespace);
+	await log(`⏳ Waiting for rollout of '${bundle.appName}'...`);
+	const rollout = await waitForRollout(client, bundle.appName, namespace, {
+		onProgress: (message) => log(`⏳ ${message}`),
+	});
 	if (!rollout.ready) {
 		const msg =
 			rollout.message ?? "Kubernetes rollout did not complete in time.";

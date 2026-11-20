@@ -133,6 +133,7 @@ const baseApp: ApplicationNested = {
 	stopGracePeriodSwarm: null,
 	ulimitsSwarm: null,
 	deploymentEngine: "docker",
+	kubernetesProbes: null,
 };
 
 const baseDomain: Domain = {

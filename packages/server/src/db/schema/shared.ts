@@ -101,6 +101,30 @@ export interface UlimitSwarm {
 
 export type UlimitsSwarm = UlimitSwarm[];
 
+const probePort = z.number().int().min(1).max(65535);
+
+export const KubernetesProbesSchema = z
+	.object({
+		readiness: z
+			.discriminatedUnion("type", [
+				z
+					.object({
+						type: z.literal("http"),
+						path: z.string().regex(/^\//, "Path must start with /"),
+						port: probePort.optional(),
+					})
+					.strict(),
+				z
+					.object({ type: z.literal("tcp"), port: probePort.optional() })
+					.strict(),
+				z.object({ type: z.literal("none") }).strict(),
+			])
+			.optional(),
+	})
+	.strict();
+
+export type KubernetesProbes = z.infer<typeof KubernetesProbesSchema>;
+
 export const HealthCheckSwarmSchema = z
 	.object({
 		Test: z.array(z.string()).optional(),

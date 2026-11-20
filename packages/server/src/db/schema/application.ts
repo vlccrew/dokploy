@@ -35,6 +35,8 @@ import {
 	EndpointSpecSwarmSchema,
 	type HealthCheckSwarm,
 	HealthCheckSwarmSchema,
+	type KubernetesProbes,
+	KubernetesProbesSchema,
 	type LabelsSwarm,
 	LabelsSwarmSchema,
 	type NetworkSwarm,
@@ -251,6 +253,7 @@ export const applications = pgTable("application", {
 	deploymentEngine: deploymentEngine("deploymentEngine")
 		.notNull()
 		.default("docker"),
+	kubernetesProbes: json("kubernetesProbes").$type<KubernetesProbes>(),
 });
 
 export const applicationsRelations = relations(
@@ -411,6 +414,7 @@ const createSchema = createInsertSchema(applications, {
 		.nullable()
 		.optional(),
 	deploymentEngine: z.enum(["docker", "kubernetes"]).optional(),
+	kubernetesProbes: KubernetesProbesSchema.nullable(),
 });
 
 export const apiCreateApplication = createSchema.pick({

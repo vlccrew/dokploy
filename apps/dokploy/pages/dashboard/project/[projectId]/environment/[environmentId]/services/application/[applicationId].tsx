@@ -18,6 +18,7 @@ import { ShowPorts } from "@/components/dashboard/application/advanced/ports/sho
 import { ShowRedirects } from "@/components/dashboard/application/advanced/redirects/show-redirects";
 import { ShowSecurity } from "@/components/dashboard/application/advanced/security/show-security";
 import { ShowBuildServer } from "@/components/dashboard/application/advanced/show-build-server";
+import { ShowReadinessCheck } from "@/components/dashboard/application/advanced/show-readiness-check";
 import { ShowResources } from "@/components/dashboard/application/advanced/show-resources";
 import { ShowTraefikConfig } from "@/components/dashboard/application/advanced/traefik/show-traefik-config";
 import { ShowVolumes } from "@/components/dashboard/application/advanced/volumes/show-volumes";
@@ -439,6 +440,9 @@ const Service = (
 												/>
 												<ShowBuildServer applicationId={applicationId} />
 												<ShowResources id={applicationId} type="application" />
+												{data?.deploymentEngine === "kubernetes" && (
+													<ShowReadinessCheck applicationId={applicationId} />
+												)}
 												<ShowVolumes id={applicationId} type="application" />
 												<AssignNetworks id={applicationId} type="application" />
 												<ShowRedirects applicationId={applicationId} />
