@@ -616,12 +616,16 @@ describe("PodDisruptionBudget", () => {
 	});
 
 	test("apply replaces an existing budget, e.g. after a replica change", async () => {
-		const { policy, client } = fakeClient(async () => ({}));
+		const { policy, client } = fakeClient(async () => ({
+			metadata: { resourceVersion: "41" },
+		}));
 		await applyPodDisruptionBudget(client, { ...baseApp, replicas: 1 }, "ns");
 		expect(policy.replaceNamespacedPodDisruptionBudget).toHaveBeenCalledWith(
 			expect.objectContaining({
 				name: "test-app-abc123",
 				body: expect.objectContaining({
+					// The API server rejects a PDB update without it.
+					metadata: expect.objectContaining({ resourceVersion: "41" }),
 					spec: expect.objectContaining({ maxUnavailable: 0 }),
 				}),
 			}),

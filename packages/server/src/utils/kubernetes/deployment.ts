@@ -353,11 +353,22 @@ export const applyPodDisruptionBudget = async (
 	const pdb = buildPodDisruptionBudget(target, namespace);
 	const name = k8sName(target.appName);
 	try {
-		await client.policy.readNamespacedPodDisruptionBudget({ name, namespace });
+		const existing = await client.policy.readNamespacedPodDisruptionBudget({
+			name,
+			namespace,
+		});
+		// Unlike a Deployment, a PDB update is rejected unless it names the
+		// version it replaces.
 		await client.policy.replaceNamespacedPodDisruptionBudget({
 			name,
 			namespace,
-			body: pdb,
+			body: {
+				...pdb,
+				metadata: {
+					...pdb.metadata,
+					resourceVersion: existing.metadata?.resourceVersion,
+				},
+			},
 		});
 	} catch (err) {
 		if (isHttpError(err) && err.code === 404) {
