@@ -53,6 +53,20 @@ export const findKubernetesClusterById = async (
 	return cluster;
 };
 
+export const findOrganizationKubernetesCluster = async (
+	kubernetesId: string,
+	organizationId: string,
+): Promise<KubernetesCluster> => {
+	const cluster = await findKubernetesClusterById(kubernetesId);
+	if (cluster.organizationId !== organizationId) {
+		throw new TRPCError({
+			code: "NOT_FOUND",
+			message: "Kubernetes cluster not found",
+		});
+	}
+	return cluster;
+};
+
 // Backs kubernetes.all, which every member can call to pick a cluster, so it
 // must never return the kubeconfig (cluster credentials).
 export const findKubernetesClustersByOrganization = async (

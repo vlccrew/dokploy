@@ -120,6 +120,74 @@ export const findProjectById = async (projectId: string) => {
 	return project;
 };
 
+export type ProjectKubernetesService = {
+	environment: string;
+	name: string;
+	type: "application" | "postgres" | "mysql" | "mariadb" | "mongo" | "redis";
+	hosts: string[];
+};
+
+/**
+ * The project's cluster and the services that have deployed to it: what stays
+ * behind on that cluster if the project moves to another one.
+ */
+export const findProjectKubernetesServices = async (projectId: string) => {
+	const engine = { name: true, deploymentEngine: true } as const;
+	const project = await db.query.projects.findFirst({
+		where: eq(projects.projectId, projectId),
+		columns: { kubernetesNamespace: true },
+		with: {
+			kubernetesCluster: { columns: { name: true } },
+			environments: {
+				columns: { name: true },
+				with: {
+					applications: {
+						columns: engine,
+						with: { domains: { columns: { host: true } } },
+					},
+					postgres: { columns: engine },
+					mysql: { columns: engine },
+					mariadb: { columns: engine },
+					mongo: { columns: engine },
+					redis: { columns: engine },
+				},
+			},
+		},
+	});
+	if (!project) {
+		throw new TRPCError({ code: "NOT_FOUND", message: "Project not found" });
+	}
+
+	const cluster = project.kubernetesCluster?.name ?? null;
+	const namespace = project.kubernetesNamespace;
+	// The first deploy that reaches a cluster names the namespace, so without
+	// one nothing was ever deployed.
+	if (!cluster || !namespace) {
+		return { cluster, namespace, services: [] };
+	}
+
+	const services = project.environments.flatMap((env) =>
+		[
+			...env.applications.map((s) => ({ ...s, type: "application" as const })),
+			...env.postgres.map((s) => ({ ...s, type: "postgres" as const })),
+			...env.mysql.map((s) => ({ ...s, type: "mysql" as const })),
+			...env.mariadb.map((s) => ({ ...s, type: "mariadb" as const })),
+			...env.mongo.map((s) => ({ ...s, type: "mongo" as const })),
+			...env.redis.map((s) => ({ ...s, type: "redis" as const })),
+		]
+			.filter((s) => s.deploymentEngine === "kubernetes")
+			.map(
+				(s): ProjectKubernetesService => ({
+					environment: env.name,
+					name: s.name,
+					type: s.type,
+					hosts: "domains" in s ? s.domains.map((d) => d.host) : [],
+				}),
+			),
+	);
+	return { cluster, namespace, services };
+};
+
 export const deleteProject = async (projectId: string) => {
 	const project = await db
 		.delete(projects)

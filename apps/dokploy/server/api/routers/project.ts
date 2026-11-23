@@ -24,8 +24,10 @@ import {
 	findMariadbById,
 	findMongoById,
 	findMySqlById,
+	findOrganizationKubernetesCluster,
 	findPostgresById,
 	findProjectById,
+	findProjectKubernetesServices,
 	findRedisById,
 	findUserById,
 	IS_CLOUD,
@@ -40,6 +42,7 @@ import {
 	checkProjectAccess,
 	checkServicePermissionAndAccess,
 	findMemberByUserId,
+	type PermissionCtx,
 } from "@dokploy/server/services/permission";
 import { serviceColumns } from "@dokploy/server/services/project";
 import { TRPCError } from "@trpc/server";
@@ -70,12 +73,45 @@ import {
 } from "@/server/db/schema";
 import { getBillingStatus } from "@/server/utils/billing";
 
+const assertCanUpdateProject = async (
+	ctx: PermissionCtx & { user: { role: string } },
+	projectId: string,
+) => {
+	const currentProject = await findProjectById(projectId);
+	if (currentProject.organizationId !== ctx.session.activeOrganizationId) {
+		throw new TRPCError({
+			code: "UNAUTHORIZED",
+			message: "You are not authorized to update this project",
+		});
+	}
+
+	if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
+		const { accessedProjects } = await findMemberByUserId(
+			ctx.user.id,
+			ctx.session.activeOrganizationId,
+		);
+		if (!accessedProjects.includes(projectId)) {
+			throw new TRPCError({
+				code: "UNAUTHORIZED",
+				message: "You don't have access to this project",
+			});
+		}
+	}
+};
+
 export const projectRouter = createTRPCRouter({
 	create: protectedProcedure
 		.input(apiCreateProject)
 		.mutation(async ({ ctx, input }) => {
 			try {
 				await checkProjectAccess(ctx, "create");
+
+				if (input.kubernetesId) {
+					await findOrganizationKubernetesCluster(
+						input.kubernetesId,
+						ctx.session.activeOrganizationId,
+					);
+				}
 
 				const admin = await findUserById(ctx.user.ownerId);
 
@@ -826,35 +862,27 @@ export const projectRouter = createTRPCRouter({
 				throw error;
 			}
 		}),
+	kubernetesServices: protectedProcedure
+		.input(apiFindOneProject)
+		.query(async ({ input, ctx }) => {
+			await assertCanUpdateProject(ctx, input.projectId);
+			return findProjectKubernetesServices(input.projectId);
+		}),
 	update: protectedProcedure
 		.input(apiUpdateProject)
 		.mutation(async ({ input, ctx }) => {
 			try {
-				const currentProject = await findProjectById(input.projectId);
-				if (
-					currentProject.organizationId !== ctx.session.activeOrganizationId
-				) {
-					throw new TRPCError({
-						code: "UNAUTHORIZED",
-						message: "You are not authorized to update this project",
-					});
-				}
-
-				if (ctx.user.role !== "owner" && ctx.user.role !== "admin") {
-					const { accessedProjects } = await findMemberByUserId(
-						ctx.user.id,
-						ctx.session.activeOrganizationId,
-					);
-					if (!accessedProjects.includes(input.projectId)) {
-						throw new TRPCError({
-							code: "UNAUTHORIZED",
-							message: "You don't have access to this project",
-						});
-					}
-				}
+				await assertCanUpdateProject(ctx, input.projectId);
 
 				if (input.env !== undefined) {
 					await checkPermission(ctx, { projectEnvVars: ["write"] });
+				}
+
+				if (input.kubernetesId) {
+					await findOrganizationKubernetesCluster(
+						input.kubernetesId,
+						ctx.session.activeOrganizationId,
+					);
 				}
 
 				const project = await updateProjectById(input.projectId, {
