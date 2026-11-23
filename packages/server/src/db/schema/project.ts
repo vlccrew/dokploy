@@ -78,10 +78,15 @@ export const apiRemoveProject = createSchema
 // 	})
 // 	.required();
 
-export const apiUpdateProject = z.object({
-	projectId: z.string().min(1),
-	name: z.string().min(1).optional(),
-	description: z.string().nullable().optional(),
-	env: z.string().optional(),
-});
+// Strict so that a field the update can't save fails the request instead of
+// being dropped while the caller is told the project was updated.
+export const apiUpdateProject = z
+	.object({
+		projectId: z.string().min(1),
+		name: z.string().min(1).optional(),
+		description: z.string().nullable().optional(),
+		env: z.string().optional(),
+		kubernetesId: z.string().min(1).nullable().optional(),
+	})
+	.strict();
 // .omit({ serverId: true });

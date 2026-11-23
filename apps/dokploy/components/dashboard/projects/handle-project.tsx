@@ -8,6 +8,16 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { AlertBlock } from "@/components/shared/alert-block";
 import { TagSelector } from "@/components/shared/tag-selector";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -88,6 +98,11 @@ export const HandleProject = ({ projectId }: Props) => {
 
 	const { data: availableTags = [] } = api.tag.all.useQuery();
 	const { data: kubernetesClusters } = api.kubernetes.all.useQuery();
+	const { data: clusterServices } = api.project.kubernetesServices.useQuery(
+		{ projectId: projectId || "" },
+		{ enabled: !!projectId && isOpen },
+	);
+	const [pendingMove, setPendingMove] = useState<AddProject | null>(null);
 	const bulkAssignMutation = api.tag.bulkAssign.useMutation();
 
 	const router = useRouter();
@@ -114,7 +129,7 @@ export const HandleProject = ({ projectId }: Props) => {
 		}
 	}, [form, form.reset, form.formState.isSubmitSuccessful, data]);
 
-	const onSubmit = async (data: AddProject) => {
+	const save = async (data: AddProject) => {
 		await mutateAsync({
 			name: data.name,
 			description: data.description,
@@ -154,6 +169,7 @@ export const HandleProject = ({ projectId }: Props) => {
 					}
 				} else {
 					refetch();
+					await utils.project.kubernetesServices.invalidate({ projectId });
 				}
 			})
 			.catch(() => {
@@ -162,6 +178,28 @@ export const HandleProject = ({ projectId }: Props) => {
 				);
 			});
 	};
+
+	const onSubmit = async (values: AddProject) => {
+		const clusterChanged =
+			(values.kubernetesId || null) !== (data?.kubernetesId ?? null);
+		if (projectId && clusterChanged) {
+			const { services } = await utils.project.kubernetesServices.fetch({
+				projectId,
+			});
+			if (services.length) {
+				setPendingMove(values);
+				return;
+			}
+		}
+		await save(values);
+	};
+
+	const currentCluster = clusterServices?.cluster;
+	const targetCluster = pendingMove?.kubernetesId
+		? kubernetesClusters?.find(
+				(c) => c.kubernetesId === pendingMove.kubernetesId,
+			)?.name
+		: null;
 
 	return (
 		<Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -285,6 +323,60 @@ export const HandleProject = ({ projectId }: Props) => {
 						</Button>
 					</DialogFooter>
 				</Form>
+				<AlertDialog
+					open={!!pendingMove}
+					onOpenChange={(open) => !open && setPendingMove(null)}
+				>
+					<AlertDialogContent>
+						<AlertDialogHeader>
+							<AlertDialogTitle>
+								{targetCluster
+									? `Move this project to ${targetCluster}?`
+									: `Remove this project from ${currentCluster}?`}
+							</AlertDialogTitle>
+							<AlertDialogDescription asChild>
+								<div className="space-y-3">
+									<p>
+										Nothing already deployed moves with the project. On{" "}
+										{currentCluster}, namespace{" "}
+										<code className="text-foreground">
+											{clusterServices?.namespace}
+										</code>{" "}
+										keeps the Deployments, Services, Ingresses and volumes of
+										these services, and Dokploy stops managing them:
+									</p>
+									<ul className="list-disc space-y-1 pl-5">
+										{clusterServices?.services.map((s) => (
+											<li key={`${s.environment}/${s.type}/${s.name}`}>
+												<span className="font-medium text-foreground">
+													{s.name}
+												</span>{" "}
+												({s.type}, {s.environment})
+												{s.hosts.length > 0 && ` · ${s.hosts.join(", ")}`}
+											</li>
+										))}
+									</ul>
+									<p>
+										{targetCluster
+											? `Each service is created on ${targetCluster} at its next deploy, and databases start there with empty volumes. Domains keep reaching ${currentCluster} until their DNS points at ${targetCluster}. Delete what's left on ${currentCluster} once you no longer need it.`
+											: "These services can't deploy until the project has a cluster again."}
+									</p>
+								</div>
+							</AlertDialogDescription>
+						</AlertDialogHeader>
+						<AlertDialogFooter>
+							<AlertDialogCancel>Cancel</AlertDialogCancel>
+							<AlertDialogAction
+								onClick={() => {
+									if (pendingMove) save(pendingMove);
+									setPendingMove(null);
+								}}
+							>
+								{targetCluster ? `Move to ${targetCluster}` : "Remove cluster"}
+							</AlertDialogAction>
+						</AlertDialogFooter>
+					</AlertDialogContent>
+				</AlertDialog>
 			</DialogContent>
 		</Dialog>
 	);
